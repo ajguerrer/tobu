@@ -1,8 +1,8 @@
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use std::convert::TryFrom;
 use std::result::Result;
 
-use crate::{field::FieldNumber, error::Error};
+use crate::{error::Error, field::FieldNumber};
 
 #[derive(Clone, Copy, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
 #[repr(i8)]
@@ -80,11 +80,7 @@ pub fn append_field(b: &mut BytesMut, num: FieldNumber, v: WireValue) {
     }
 }
 
-fn consume_field_value(
-    num: FieldNumber,
-    typ: WireType,
-    b: &mut Bytes,
-) -> Result<WireValue, Error> {
+fn consume_field_value(num: FieldNumber, typ: WireType, b: &mut Bytes) -> Result<WireValue, Error> {
     match typ {
         WireType::Varint => Ok(WireValue::Varint(consume_varint(b)?)),
         WireType::Fixed32 => Ok(WireValue::Fixed32(consume_fixed32(b)?)),
@@ -103,9 +99,9 @@ fn consume_tag(b: &mut Bytes) -> Result<(FieldNumber, WireType), Error> {
     Ok(decode_tag(consume_varint(b)?)?)
 }
 
-// fn size_tag(num: FieldNumber) -> usize {
-//     size_varint(encode_tag(num, WireType::Varint))
-// }
+fn size_tag(num: FieldNumber) -> usize {
+    size_varint(encode_tag(num, WireType::Varint))
+}
 
 // Varints are a variable length encoding for a u64.
 // To encode, a u64 is split every 7 bits and formed into a [u8] where the most
@@ -141,10 +137,11 @@ pub fn consume_varint(b: &mut Bytes) -> Result<u64, Error> {
     Err(Error::Overflow)
 }
 
-// fn size_varint(v: u64) -> usize {
-//     // 1 + (bits_needed_to_represent(v) - 1)/ 7
-//     1 + (63u32.saturating_sub(v.leading_zeros()) / 7) as usize
-// }
+pub fn size_varint(v: u64) -> usize {
+    // 1 + (bits_needed_to_represent(v) - 1)/ 7
+    // 9/64 is a good enough approximation of 1/7 and easy to divide
+    1 + (64u32 - i.leading_zeros()) as usize * 9 / 64
+}
 
 fn append_fixed32(b: &mut BytesMut, v: u32) {
     b.put_u32_le(v);
@@ -158,9 +155,9 @@ fn consume_fixed32(b: &mut Bytes) -> Result<u32, Error> {
     Ok(b.get_u32_le())
 }
 
-// fn size_fixed32() -> usize {
-//     4
-// }
+pub fn size_fixed32() -> usize {
+    4
+}
 
 fn append_fixed64(b: &mut BytesMut, v: u64) {
     b.put_u64_le(v);
@@ -174,9 +171,9 @@ fn consume_fixed64(b: &mut Bytes) -> Result<u64, Error> {
     Ok(b.get_u64_le())
 }
 
-// fn size_fixed64() -> usize {
-//     8
-// }
+fn size_fixed64() -> usize {
+    8
+}
 
 fn append_bytes(b: &mut BytesMut, v: Bytes) {
     append_varint(b, v.len() as u64);
@@ -192,9 +189,9 @@ fn consume_bytes(b: &mut Bytes) -> Result<Bytes, Error> {
     }
 }
 
-// fn size_bytes(n: usize) -> usize {
-//     size_varint(n as u64) + n
-// }
+fn size_bytes(n: usize) -> usize {
+    size_varint(n as u64) + n
+}
 
 fn append_group(b: &mut BytesMut, num: FieldNumber, v: Vec<(FieldNumber, WireValue)>) {
     for (vn, vv) in v {
@@ -217,9 +214,9 @@ fn consume_group(num: FieldNumber, b: &mut Bytes) -> Result<Vec<(FieldNumber, Wi
     }
 }
 
-// fn size_group(num: FieldNumber, n: usize) -> usize {
-//     n + size_tag(num)
-// }
+pub fn size_group(num: FieldNumber, n: usize) -> usize {
+    n + size_tag(num)
+}
 
 fn decode_tag(x: u64) -> Result<(FieldNumber, WireType), Error> {
     Ok((
@@ -532,7 +529,10 @@ mod tests {
         let mut b = BytesMut::new();
         append_bytes(&mut b, Bytes::from_static(b"hello"));
         assert_eq!(b, Bytes::from_static(b"\x05hello"));
-        assert_eq!(consume_bytes(&mut b.freeze()), Ok(Bytes::from_static(b"hello")));
+        assert_eq!(
+            consume_bytes(&mut b.freeze()),
+            Ok(Bytes::from_static(b"hello"))
+        );
     }
 
     #[test]
@@ -540,7 +540,10 @@ mod tests {
         let v = Bytes::from(b"hello".repeat(50));
         let mut b = BytesMut::new();
         append_bytes(&mut b, v.clone());
-        assert_eq!(b, Bytes::from([Bytes::from_static(b"\xfa\x01"), v.clone()].concat()));
+        assert_eq!(
+            b,
+            Bytes::from([Bytes::from_static(b"\xfa\x01"), v.clone()].concat())
+        );
         assert_eq!(consume_bytes(&mut b.freeze()), Ok(v));
     }
 
@@ -632,11 +635,7 @@ mod tests {
     #[test]
     fn tag_min() {
         let mut b = BytesMut::new();
-        append_tag(
-            &mut b,
-            FieldNumber::try_from(1).unwrap(),
-            WireType::Fixed32,
-        );
+        append_tag(&mut b, FieldNumber::try_from(1).unwrap(), WireType::Fixed32);
         assert_eq!(b, Bytes::from_static(b"\x0d"));
         assert_eq!(
             consume_tag(&mut b.freeze()),
@@ -650,10 +649,7 @@ mod tests {
         let max = FieldNumber::try_from((1 << 29) - 1).unwrap();
         append_tag(&mut b, max, WireType::Fixed32);
         assert_eq!(b, Bytes::from_static(b"\xfd\xff\xff\xff\x0f"));
-        assert_eq!(
-            consume_tag(&mut b.freeze()),
-            Ok((max, WireType::Fixed32))
-        );
+        assert_eq!(consume_tag(&mut b.freeze()), Ok((max, WireType::Fixed32)));
     }
 
     // #[test]
