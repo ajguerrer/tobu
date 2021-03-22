@@ -238,7 +238,7 @@ fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
 // }
 
 // fn decode_bool(x: u64) -> bool {
-//     x != 0
+//     x != 0();
 // }
 
 // fn encode_bool(x: bool) -> u64 {

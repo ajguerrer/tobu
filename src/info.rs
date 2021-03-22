@@ -1,32 +1,31 @@
-#[derive(Debug, Clone, Copy)]
 pub struct FileDescriptor {
-    name: &'static str,
-    package: &'static str,
-    message_type: &'static [&'static MessageDescriptor],
-    enum_type: &'static [&'static EnumDescriptor],
-    syntax: &'static str,
+    pub name: &'static str,
+    pub package: &'static str,
+    pub message_type: &'static [&'static MessageDescriptor],
+    pub enum_type: &'static [&'static EnumDescriptor],
+    pub syntax: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct MessageDescriptor {
-    name: &'static str,
-    fields: &'static [FieldDescriptor],
-    nested_type: &'static [&'static MessageDescriptor],
-    enum_type: &'static [EnumDescriptor],
-    oneof_decl: &'static [OneofDescriptor],
-    options: MessageOptions,
+    pub name: &'static str,
+    pub fields: &'static [FieldDescriptor],
+    pub nested_type: &'static [&'static MessageDescriptor],
+    pub enum_type: &'static [EnumDescriptor],
+    pub oneof_decl: &'static [OneofDescriptor],
+    pub options: MessageOptions,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct FieldDescriptor {
-    name: &'static str,
-    number: i32,
-    label: FieldDescriptorLabel,
-    type_: FieldDescriptorType,
-    type_name: &'static str,
-    json_name: &'static str,
-    default_value: &'static str,
-    oneof_index: Option<i32>,
+    pub name: &'static str,
+    pub number: i32,
+    pub label: FieldDescriptorLabel,
+    pub type_: FieldDescriptorType,
+    pub type_name: &'static str,
+    pub json_name: &'static str,
+    pub default_value: &'static str,
+    pub oneof_index: Option<i32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -62,22 +61,22 @@ pub enum FieldDescriptorType {
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumDescriptor {
-    name: &'static str,
-    value: &'static [EnumValueDescriptor],
+    pub name: &'static str,
+    pub value: &'static [EnumValueDescriptor],
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct EnumValueDescriptor {
-    name: &'static str,
-    number: i32,
+    pub name: &'static str,
+    pub number: i32,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct OneofDescriptor {
-    name: &'static str,
+    pub name: &'static str,
 }
 
 #[derive(Debug, Clone, Copy)]
 pub struct MessageOptions {
-    map_entry: bool,
+    pub map_entry: bool,
 }

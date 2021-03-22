@@ -1,57 +1,65 @@
-use serde::Serializer;
+use serde::{
+    ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
+    Serializer,
+};
 
-use crate::error::Error;
+use crate::{descriptor::MessageDescriptor, error::Error};
 
-struct SizeHint;
+struct SizeHint {
+    message: &'static MessageDescriptor,
+    field_index: usize,
+}
 
-impl Serializer for SizeHint {
-    type Ok = u64;
+impl<'a> Serializer for &'a mut SizeHint {
+    type Ok = usize;
 
     type Error = Error;
 
-    type SerializeSeq;
+    type SerializeSeq = RepeatedSizeHint<'a>;
 
-    type SerializeTuple;
+    type SerializeTuple = Impossible<Self::Ok, Self::Error>;
 
-    type SerializeTupleStruct;
+    type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
 
-    type SerializeTupleVariant;
+    type SerializeTupleVariant = Impossible<Self::Ok, Self::Error>;
 
-    type SerializeMap;
+    type SerializeMap = MapSizeHint<'a>;
 
-    type SerializeStruct;
+    type SerializeStruct = MessageSizeHint<'a>;
 
-    type SerializeStructVariant;
+    type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
-    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
-        todo!()
+    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
+        // 0 and 1 are both a 1 byte varint
+        Ok(1)
     }
 
-    fn serialize_i8(self, v: i8) -> Result<Self::Ok, Self::Error> {
-        todo!()
+    fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
+        Err(Error::SerializeError("i8 not supported".to_string()))
     }
 
-    fn serialize_i16(self, v: i16) -> Result<Self::Ok, Self::Error> {
-        todo!()
+    fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
+        Err(Error::SerializeError("i16 not supported".to_string()))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        self.serialize_u32(v as u32)
     }
 
     fn serialize_i64(self, v: i64) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        self.serialize_u64(v as u64)
     }
 
-    fn serialize_u8(self, v: u8) -> Result<Self::Ok, Self::Error> {
-        todo!()
+    fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
+        Err(Error::SerializeError("u8 not supported".to_string()))
     }
 
-    fn serialize_u16(self, v: u16) -> Result<Self::Ok, Self::Error> {
-        todo!()
+    fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
+        Err(Error::SerializeError("u16 not supported".to_string()))
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
+        Ok(size_varint)
         todo!()
     }
 
@@ -177,5 +185,112 @@ impl Serializer for SizeHint {
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         todo!()
+    }
+}
+
+struct RepeatedSizeHint<'a> {
+    total: usize,
+    ser: &'a mut SizeHint,
+    packed: Option<i32>,
+}
+
+impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
+    type Ok = usize;
+    type Error = Error;
+
+    fn serialize_element<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: serde::Serialize,
+    {
+        match self.packed {
+            Some(field_number) => {
+                self.total += self.ser.serialize_i32(field_number)?;
+                self.total += value.serialize(&mut *self.ser)?;
+            }
+            None => self.total += value.serialize(&mut *self.ser)?,
+        };
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(self.total)
+    }
+}
+
+struct MapSizeHint<'a> {
+    total: usize,
+    ser: &'a mut SizeHint,
+}
+
+impl<'a> SerializeMap for MapSizeHint<'a> {
+    type Ok = usize;
+    type Error = Error;
+
+    fn serialize_key<T: ?Sized>(&mut self, key: &T) -> Result<(), Self::Error>
+    where
+        T: serde::Serialize,
+    {
+        // field number for key is always 1 (size 1)
+        self.total = 1 + key.serialize(&mut *self.ser)?;
+        Ok(())
+    }
+
+    fn serialize_value<T: ?Sized>(&mut self, value: &T) -> Result<(), Self::Error>
+    where
+        T: serde::Serialize,
+    {
+        // field number for value is always 2 (size 1)
+        self.total = 1 + value.serialize(&mut *self.ser)?;
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(self.total)
+    }
+}
+
+struct MessageSizeHint<'a> {
+    total: usize,
+    ser: &'a mut SizeHint,
+    field_index: usize,
+}
+
+impl<'a> MessageSizeHint<'a> {
+    fn field_number(&self) -> Result<i32, Error> {
+        Ok(self
+            .ser
+            .message
+            .fields
+            .get(self.field_index)
+            .ok_or_else(|| Error::SerializeError("field descriptor not found".to_owned()))?
+            .number)
+    }
+}
+
+impl<'a> SerializeStruct for MessageSizeHint<'a> {
+    type Ok = usize;
+    type Error = Error;
+
+    fn serialize_field<T: ?Sized>(
+        &mut self,
+        _key: &'static str,
+        value: &T,
+    ) -> Result<(), Self::Error>
+    where
+        T: serde::Serialize,
+    {
+        self.total += self.ser.serialize_i32(self.field_number()?)?;
+        self.total += value.serialize(&mut *self.ser)?;
+        self.ser.field_index += 1;
+        Ok(())
+    }
+
+    fn end(self) -> Result<Self::Ok, Self::Error> {
+        Ok(self.total)
+    }
+
+    fn skip_field(&mut self, _key: &'static str) -> Result<(), Self::Error> {
+        self.ser.field_index += 1;
+        Ok(())
     }
 }
