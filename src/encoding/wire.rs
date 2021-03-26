@@ -1,11 +1,6 @@
-use bytes::{Buf, Bytes, BytesMut};
-use std::convert::TryFrom;
 use std::result::Result;
 
-use crate::{error::Error, field::FieldNumber};
-
-#[derive(Clone, Copy, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
-#[repr(i8)]
+#[derive(Clone, Copy, Debug)]
 pub enum WireType {
     Varint = 0,
     Fixed32 = 5,
@@ -33,15 +28,7 @@ impl WireType {
     }
 }
 
-impl TryFrom<i8> for WireType {
-    type Error = Error;
-
-    fn try_from(n: i8) -> Result<Self, Self::Error> {
-        WireType::new(n).ok_or(Error::InvalidWireType(n))
-    }
-}
-
-#[derive(Clone, Debug, Hash, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub enum WireValue {
     Varint(u64),
     Fixed32(u32),

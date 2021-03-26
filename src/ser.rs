@@ -3,30 +3,24 @@ use serde::{
     Serializer,
 };
 
-use crate::{descriptor::MessageDescriptor, error::Error};
+use crate::{error::Error, info::MessageInfo};
+
 
 struct SizeHint {
-    message: &'static MessageDescriptor,
+    message_info: &'static MessageInfo,
     field_index: usize,
 }
 
 impl<'a> Serializer for &'a mut SizeHint {
     type Ok = usize;
-
     type Error = Error;
 
     type SerializeSeq = RepeatedSizeHint<'a>;
-
     type SerializeTuple = Impossible<Self::Ok, Self::Error>;
-
     type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
-
     type SerializeTupleVariant = Impossible<Self::Ok, Self::Error>;
-
     type SerializeMap = MapSizeHint<'a>;
-
     type SerializeStruct = MessageSizeHint<'a>;
-
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
     fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
@@ -59,7 +53,7 @@ impl<'a> Serializer for &'a mut SizeHint {
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(size_varint)
+        Ok(size_varint(v as u64))
         todo!()
     }
 
