@@ -6,7 +6,7 @@ pub struct MessageInfo {
     pub is_map: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Syntax {
     Proto2,
     Proto3,
@@ -21,6 +21,7 @@ pub struct FieldInfo {
     pub type_name: &'static str,
     pub json_name: &'static str,
     pub default_value: &'static str,
+    pub packed: bool,
     pub oneof_index: Option<i32>,
     pub message_info: Option<&'static MessageInfo>,
     pub enum_info: Option<&'static EnumInfo>,

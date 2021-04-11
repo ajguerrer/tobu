@@ -1,14 +1,26 @@
 use serde::{
-    ser::{Impossible, SerializeMap, SerializeSeq, SerializeStruct},
+    ser::{self, Impossible, SerializeMap, SerializeSeq, SerializeStruct},
     Serializer,
 };
 
-use crate::{error::Error, info::MessageInfo};
-
+use crate::{
+    encoding::wire::{encode_zig_zag, size_bytes, size_fixed32, size_fixed64, size_varint},
+    error::Error,
+    info::{FieldInfo, MessageInfo, Syntax, Type},
+};
 
 struct SizeHint {
     message_info: &'static MessageInfo,
     field_index: usize,
+}
+
+impl SizeHint {
+    fn field_info(&self) -> Result<&'static FieldInfo, Error> {
+        self.message_info
+            .fields
+            .get(self.field_index)
+            .ok_or_else(|| ser::Error::custom("field descriptor not found"))
+    }
 }
 
 impl<'a> Serializer for &'a mut SizeHint {
@@ -23,17 +35,16 @@ impl<'a> Serializer for &'a mut SizeHint {
     type SerializeStruct = MessageSizeHint<'a>;
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
-    fn serialize_bool(self, _v: bool) -> Result<Self::Ok, Self::Error> {
-        // 0 and 1 are both a 1 byte varint
-        Ok(1)
+    fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
+        self.serialize_u64(v as u64)
     }
 
     fn serialize_i8(self, _v: i8) -> Result<Self::Ok, Self::Error> {
-        Err(Error::SerializeError("i8 not supported".to_string()))
+        Err(ser::Error::custom("i8 not supported"))
     }
 
     fn serialize_i16(self, _v: i16) -> Result<Self::Ok, Self::Error> {
-        Err(Error::SerializeError("i16 not supported".to_string()))
+        Err(ser::Error::custom("i16 not supported"))
     }
 
     fn serialize_i32(self, v: i32) -> Result<Self::Ok, Self::Error> {
@@ -45,59 +56,79 @@ impl<'a> Serializer for &'a mut SizeHint {
     }
 
     fn serialize_u8(self, _v: u8) -> Result<Self::Ok, Self::Error> {
-        Err(Error::SerializeError("u8 not supported".to_string()))
+        Err(ser::Error::custom("u8 not supported"))
     }
 
     fn serialize_u16(self, _v: u16) -> Result<Self::Ok, Self::Error> {
-        Err(Error::SerializeError("u16 not supported".to_string()))
+        Err(ser::Error::custom("u16 not supported"))
     }
 
     fn serialize_u32(self, v: u32) -> Result<Self::Ok, Self::Error> {
-        Ok(size_varint(v as u64))
-        todo!()
+        self.serialize_u64(v as u64)
     }
 
     fn serialize_u64(self, v: u64) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        let field_info = self.field_info()?;
+        if self.message_info.syntax == Syntax::Proto3 && v == 0 && field_info.oneof_index.is_none()
+        {
+            return Ok(0);
+        }
+
+        match field_info.ty {
+            Type::Int32 | Type::Uint32 | Type::Int64 | Type::Uint64 | Type::Bool | Type::Enum => {
+                Ok(size_varint(v))
+            }
+            Type::Fixed32 | Type::SFixed32 | Type::Float => Ok(size_fixed32()),
+            Type::Fixed64 | Type::SFixed64 | Type::Double => Ok(size_fixed64()),
+            Type::SInt32 | Type::SInt64 => Ok(size_varint(encode_zig_zag(v as i64))),
+            _ => Err(ser::Error::custom("field descriptor does not match value")),
+        }
     }
 
     fn serialize_f32(self, v: f32) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        self.serialize_u64(v.to_bits() as u64)
     }
 
     fn serialize_f64(self, v: f64) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        self.serialize_u64(v.to_bits())
     }
 
     fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_str(self, v: &str) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        self.serialize_bytes(v.as_bytes())
     }
 
     fn serialize_bytes(self, v: &[u8]) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        if self.message_info.syntax == Syntax::Proto3
+            && v.is_empty()
+            && self.field_info()?.oneof_index.is_none()
+        {
+            Ok(0)
+        } else {
+            Ok(size_bytes(v.len()))
+        }
     }
 
     fn serialize_none(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Ok(0)
     }
 
     fn serialize_some<T: ?Sized>(self, value: &T) -> Result<Self::Ok, Self::Error>
     where
         T: serde::Serialize,
     {
-        todo!()
+        value.serialize(self)
     }
 
     fn serialize_unit(self) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("unit not supported"))
     }
 
     fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("unit struct not supported"))
     }
 
     fn serialize_unit_variant(
@@ -106,7 +137,7 @@ impl<'a> Serializer for &'a mut SizeHint {
         variant_index: u32,
         variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("unit variant not supported"))
     }
 
     fn serialize_newtype_struct<T: ?Sized>(
@@ -117,7 +148,7 @@ impl<'a> Serializer for &'a mut SizeHint {
     where
         T: serde::Serialize,
     {
-        todo!()
+        Err(ser::Error::custom("newtype struct not supported"))
     }
 
     fn serialize_newtype_variant<T: ?Sized>(
@@ -130,15 +161,26 @@ impl<'a> Serializer for &'a mut SizeHint {
     where
         T: serde::Serialize,
     {
-        todo!()
+        Err(ser::Error::custom("newtype variant not supported"))
     }
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
-        todo!()
+        let field_info = self.field_info()?;
+        let packed = if field_info.packed {
+            Some(size_varint(field_info.number as u64))
+        } else {
+            None
+        };
+
+        Ok(RepeatedSizeHint {
+            total: 0,
+            ser: self,
+            packed,
+        })
     }
 
     fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_tuple_struct(
@@ -146,7 +188,7 @@ impl<'a> Serializer for &'a mut SizeHint {
         name: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_tuple_variant(
@@ -156,7 +198,7 @@ impl<'a> Serializer for &'a mut SizeHint {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
@@ -178,14 +220,14 @@ impl<'a> Serializer for &'a mut SizeHint {
         variant: &'static str,
         len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
-        todo!()
+        Err(ser::Error::custom("char not supported"))
     }
 }
 
 struct RepeatedSizeHint<'a> {
     total: usize,
     ser: &'a mut SizeHint,
-    packed: Option<i32>,
+    packed: Option<usize>,
 }
 
 impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
@@ -197,8 +239,8 @@ impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
         T: serde::Serialize,
     {
         match self.packed {
-            Some(field_number) => {
-                self.total += self.ser.serialize_i32(field_number)?;
+            Some(size_field_number) => {
+                self.total += size_field_number;
                 self.total += value.serialize(&mut *self.ser)?;
             }
             None => self.total += value.serialize(&mut *self.ser)?,
@@ -247,18 +289,6 @@ struct MessageSizeHint<'a> {
     total: usize,
     ser: &'a mut SizeHint,
     field_index: usize,
-}
-
-impl<'a> MessageSizeHint<'a> {
-    fn field_number(&self) -> Result<i32, Error> {
-        Ok(self
-            .ser
-            .message
-            .fields
-            .get(self.field_index)
-            .ok_or_else(|| Error::SerializeError("field descriptor not found".to_owned()))?
-            .number)
-    }
 }
 
 impl<'a> SerializeStruct for MessageSizeHint<'a> {

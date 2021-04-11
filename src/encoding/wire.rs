@@ -1,6 +1,10 @@
-use std::result::Result;
+use std::{convert::TryFrom, result::Result};
 
-#[derive(Clone, Copy, Debug)]
+use bytes::{Buf, BufMut, Bytes, BytesMut};
+
+use super::{error::Error, field::FieldNumber};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WireType {
     Varint = 0,
     Fixed32 = 5,
@@ -28,7 +32,15 @@ impl WireType {
     }
 }
 
-#[derive(Clone, Debug)]
+impl TryFrom<i8> for WireType {
+    type Error = Error;
+
+    fn try_from(n: i8) -> Result<Self, Self::Error> {
+        WireType::new(n).ok_or(Error::InvalidWireType(n))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WireValue {
     Varint(u64),
     Fixed32(u32),
@@ -124,10 +136,10 @@ pub fn consume_varint(b: &mut Bytes) -> Result<u64, Error> {
     Err(Error::Overflow)
 }
 
-pub fn size_varint(v: u64) -> usize {
+pub fn size_varint(n: u64) -> usize {
     // 1 + (bits_needed_to_represent(v) - 1)/ 7
     // 9/64 is a good enough approximation of 1/7 and easy to divide
-    1 + (64u32 - i.leading_zeros()) as usize * 9 / 64
+    1 + (64u32 - n.leading_zeros()) as usize * 9 / 64
 }
 
 fn append_fixed32(b: &mut BytesMut, v: u32) {
@@ -158,7 +170,7 @@ fn consume_fixed64(b: &mut Bytes) -> Result<u64, Error> {
     Ok(b.get_u64_le())
 }
 
-fn size_fixed64() -> usize {
+pub fn size_fixed64() -> usize {
     8
 }
 
@@ -176,7 +188,7 @@ fn consume_bytes(b: &mut Bytes) -> Result<Bytes, Error> {
     }
 }
 
-fn size_bytes(n: usize) -> usize {
+pub fn size_bytes(n: usize) -> usize {
     size_varint(n as u64) + n
 }
 
@@ -216,21 +228,25 @@ fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
     ((num.get() as u64) << 3) | (typ as u64 & 7)
 }
 
-// pub fn decode_zig_zag(x: u64) -> i64 {
-//     (x >> 1) as i64 ^ (x as i64) << 63 >> 63
-// }
+pub fn decode_zig_zag(x: u64) -> i64 {
+    (x >> 1) as i64 ^ (x as i64) << 63 >> 63
+}
 
-// pub fn encode_zig_zag(x: i64) -> u64 {
-//     (x << 1) as u64 ^ (x >> 63) as u64
-// }
+pub fn encode_zig_zag(x: i64) -> u64 {
+    (x << 1) as u64 ^ (x >> 63) as u64
+}
 
-// fn decode_bool(x: u64) -> bool {
-//     x != 0();
-// }
+pub fn decode_bool(x: u64) -> bool {
+    x != 0
+}
 
-// fn encode_bool(x: bool) -> u64 {
-//     x as u64
-// }
+pub fn encode_bool(x: bool) -> u64 {
+    if x {
+        1
+    } else {
+        0
+    }
+}
 
 #[cfg(test)]
 mod tests {
