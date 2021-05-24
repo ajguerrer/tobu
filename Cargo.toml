@@ -1,5 +1,5 @@
 [package]
-name = "serde-protobuf"
+name = "serde_protobuf"
 version = "0.1.0"
 authors = ["Andrew Guerrero <ajguerrer@gmail.com>"]
 edition = "2018"
@@ -8,5 +8,6 @@ edition = "2018"
 
 [dependencies]
 bytes = "1"
-serde = "1"
+serde = {version ="1", features = ["derive"] }
 thiserror = "1"
+

@@ -9,32 +9,17 @@ use crate::{
     info::{FieldInfo, MessageInfo, Syntax, Type},
 };
 
-pub(crate) struct SizeHint {
+struct SizeHint {
     message_info: &'static MessageInfo,
     field_index: usize,
-    init: bool,
 }
 
 impl SizeHint {
-    pub fn new(message_info: &'static MessageInfo) -> Self {
-        SizeHint {
-            message_info,
-            field_index: 0,
-            init: false,
-        }
-    }
-
     fn field_info(&self) -> Result<&'static FieldInfo, Error> {
         self.message_info
             .fields
             .get(self.field_index)
             .ok_or_else(|| ser::Error::custom("field descriptor not found"))
-    }
-
-    fn message_info(&self) -> Result<&'static MessageInfo, Error> {
-        self.field_info()?
-            .message_info
-            .ok_or_else(|| ser::Error::custom("message descriptor not found"))
     }
 }
 
@@ -108,7 +93,7 @@ impl<'a> Serializer for &'a mut SizeHint {
         self.serialize_u64(v.to_bits())
     }
 
-    fn serialize_char(self, _v: char) -> Result<Self::Ok, Self::Error> {
+    fn serialize_char(self, v: char) -> Result<Self::Ok, Self::Error> {
         Err(ser::Error::custom("char not supported"))
     }
 
@@ -142,23 +127,23 @@ impl<'a> Serializer for &'a mut SizeHint {
         Err(ser::Error::custom("unit not supported"))
     }
 
-    fn serialize_unit_struct(self, _name: &'static str) -> Result<Self::Ok, Self::Error> {
+    fn serialize_unit_struct(self, name: &'static str) -> Result<Self::Ok, Self::Error> {
         Err(ser::Error::custom("unit struct not supported"))
     }
 
     fn serialize_unit_variant(
         self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
     ) -> Result<Self::Ok, Self::Error> {
         Err(ser::Error::custom("unit variant not supported"))
     }
 
     fn serialize_newtype_struct<T: ?Sized>(
         self,
-        _name: &'static str,
-        _value: &T,
+        name: &'static str,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: serde::Serialize,
@@ -168,10 +153,10 @@ impl<'a> Serializer for &'a mut SizeHint {
 
     fn serialize_newtype_variant<T: ?Sized>(
         self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _value: &T,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        value: &T,
     ) -> Result<Self::Ok, Self::Error>
     where
         T: serde::Serialize,
@@ -181,94 +166,68 @@ impl<'a> Serializer for &'a mut SizeHint {
 
     fn serialize_seq(self, len: Option<usize>) -> Result<Self::SerializeSeq, Self::Error> {
         let field_info = self.field_info()?;
-        let size_tag = size_varint(field_info.number as u64);
-        if field_info.packed {
-            // tag + len + element_1..element_len
-            let len = len.ok_or_else(|| ser::Error::custom("unknown seq len"))?;
-            let size_len = size_varint(len as u64);
-            Ok(RepeatedSizeHint {
-                total: size_tag + size_len,
-                ser: self,
-                size_tag: 0,
-            })
+        let packed = if field_info.packed {
+            Some(size_varint(field_info.number as u64))
         } else {
-            // (tag + element_1)..(tag + element_len)
-            Ok(RepeatedSizeHint {
-                total: 0,
-                ser: self,
-                size_tag,
-            })
-        }
+            None
+        };
+
+        Ok(RepeatedSizeHint {
+            total: 0,
+            ser: self,
+            packed,
+        })
     }
 
-    fn serialize_tuple(self, _len: usize) -> Result<Self::SerializeTuple, Self::Error> {
+    fn serialize_tuple(self, len: usize) -> Result<Self::SerializeTuple, Self::Error> {
         Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_tuple_struct(
         self,
-        _name: &'static str,
-        _len: usize,
+        name: &'static str,
+        len: usize,
     ) -> Result<Self::SerializeTupleStruct, Self::Error> {
         Err(ser::Error::custom("char not supported"))
     }
 
     fn serialize_tuple_variant(
         self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _len: usize,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
     ) -> Result<Self::SerializeTupleVariant, Self::Error> {
         Err(ser::Error::custom("char not supported"))
     }
 
-    fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
-        Ok(MapSizeHint {
-            total: 0,
-            ser: self,
-        })
+    fn serialize_map(self, len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
+        todo!()
     }
 
     fn serialize_struct(
         self,
-        _name: &'static str,
-        _len: usize,
+        name: &'static str,
+        len: usize,
     ) -> Result<Self::SerializeStruct, Self::Error> {
-        if self.init {
-            let parent = Some((self.message_info, self.field_index));
-            self.message_info = self.message_info()?;
-            self.field_index = 0;
-            Ok(MessageSizeHint {
-                total: 0,
-                ser: self,
-                parent,
-            })
-        } else {
-            self.init = true;
-            Ok(MessageSizeHint {
-                total: 0,
-                ser: self,
-                parent: None,
-            })
-        }
+        todo!()
     }
 
     fn serialize_struct_variant(
         self,
-        _name: &'static str,
-        _variant_index: u32,
-        _variant: &'static str,
-        _len: usize,
+        name: &'static str,
+        variant_index: u32,
+        variant: &'static str,
+        len: usize,
     ) -> Result<Self::SerializeStructVariant, Self::Error> {
         Err(ser::Error::custom("char not supported"))
     }
 }
 
-pub(crate) struct RepeatedSizeHint<'a> {
+struct RepeatedSizeHint<'a> {
     total: usize,
     ser: &'a mut SizeHint,
-    size_tag: usize,
+    packed: Option<usize>,
 }
 
 impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
@@ -279,8 +238,13 @@ impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
     where
         T: serde::Serialize,
     {
-        self.total += self.size_tag;
-        self.total += value.serialize(&mut *self.ser)?;
+        match self.packed {
+            Some(size_field_number) => {
+                self.total += size_field_number;
+                self.total += value.serialize(&mut *self.ser)?;
+            }
+            None => self.total += value.serialize(&mut *self.ser)?,
+        };
         Ok(())
     }
 
@@ -289,7 +253,7 @@ impl<'a> SerializeSeq for RepeatedSizeHint<'a> {
     }
 }
 
-pub(crate) struct MapSizeHint<'a> {
+struct MapSizeHint<'a> {
     total: usize,
     ser: &'a mut SizeHint,
 }
@@ -321,10 +285,10 @@ impl<'a> SerializeMap for MapSizeHint<'a> {
     }
 }
 
-pub(crate) struct MessageSizeHint<'a> {
+struct MessageSizeHint<'a> {
     total: usize,
     ser: &'a mut SizeHint,
-    parent: Option<(&'static MessageInfo, usize)>,
+    field_index: usize,
 }
 
 impl<'a> SerializeStruct for MessageSizeHint<'a> {
@@ -339,16 +303,13 @@ impl<'a> SerializeStruct for MessageSizeHint<'a> {
     where
         T: serde::Serialize,
     {
+        self.total += self.ser.serialize_i32(self.field_number()?)?;
         self.total += value.serialize(&mut *self.ser)?;
         self.ser.field_index += 1;
         Ok(())
     }
 
     fn end(self) -> Result<Self::Ok, Self::Error> {
-        if let Some((info, index)) = self.parent {
-            self.ser.message_info = info;
-            self.ser.field_index = index;
-        }
         Ok(self.total)
     }
 

@@ -1,4 +1,3 @@
-
 #[derive(thiserror::Error, Debug, PartialEq)]
 pub enum Error {
     #[error("field {0} contains invalid UTF-8")]
@@ -20,7 +19,7 @@ pub enum Error {
     InvalidName(String),
 
     #[error("unexpected EOF")]
-    EOF,
+    Eof,
 
     #[error("variable length integer overflow")]
     Overflow,

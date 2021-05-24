@@ -1,4 +1,4 @@
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 pub struct MessageInfo {
     pub name: &'static str,
     pub fields: &'static [FieldInfo],
@@ -12,7 +12,13 @@ pub enum Syntax {
     Proto3,
 }
 
-#[derive(Debug, Clone, Copy)]
+impl Default for Syntax {
+    fn default() -> Self {
+        Syntax::Proto2
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy)]
 pub struct FieldInfo {
     pub name: &'static str,
     pub number: i32,
@@ -20,7 +26,6 @@ pub struct FieldInfo {
     pub ty: Type,
     pub type_name: &'static str,
     pub json_name: &'static str,
-    pub default_value: &'static str,
     pub packed: bool,
     pub oneof_index: Option<i32>,
     pub message_info: Option<&'static MessageInfo>,
@@ -32,6 +37,12 @@ pub enum Cardinality {
     Optional,
     Required,
     Repeated,
+}
+
+impl Default for Cardinality {
+    fn default() -> Self {
+        Cardinality::Optional
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -54,6 +65,12 @@ pub enum Type {
     SFixed64,
     SInt32,
     SInt64,
+}
+
+impl Default for Type {
+    fn default() -> Self {
+        Type::Double
+    }
 }
 
 #[derive(Debug, Clone, Copy)]

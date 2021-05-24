@@ -95,7 +95,7 @@ fn append_tag(b: &mut BytesMut, num: FieldNumber, typ: WireType) {
 }
 
 fn consume_tag(b: &mut Bytes) -> Result<(FieldNumber, WireType), Error> {
-    Ok(decode_tag(consume_varint(b)?)?)
+    decode_tag(consume_varint(b)?)
 }
 
 fn size_tag(num: FieldNumber) -> usize {
@@ -118,7 +118,7 @@ pub fn consume_varint(b: &mut Bytes) -> Result<u64, Error> {
     let mut y: u64 = 0;
     for i in 0..=9 {
         if b.is_empty() {
-            return Err(Error::EOF);
+            return Err(Error::Eof);
         }
 
         let v = b.get_u8() as u64;
@@ -148,7 +148,7 @@ fn append_fixed32(b: &mut BytesMut, v: u32) {
 
 fn consume_fixed32(b: &mut Bytes) -> Result<u32, Error> {
     if b.len() < 4 {
-        return Err(Error::EOF);
+        return Err(Error::Eof);
     }
 
     Ok(b.get_u32_le())
@@ -164,7 +164,7 @@ fn append_fixed64(b: &mut BytesMut, v: u64) {
 
 fn consume_fixed64(b: &mut Bytes) -> Result<u64, Error> {
     if b.len() < 8 {
-        return Err(Error::EOF);
+        return Err(Error::Eof);
     }
 
     Ok(b.get_u64_le())
@@ -182,7 +182,7 @@ fn append_bytes(b: &mut BytesMut, v: Bytes) {
 fn consume_bytes(b: &mut Bytes) -> Result<Bytes, Error> {
     let m = consume_varint(b)?;
     if m > b.len() as u64 {
-        Err(Error::EOF)
+        Err(Error::Eof)
     } else {
         Ok(b.split_to(m as usize))
     }
@@ -224,7 +224,7 @@ fn decode_tag(x: u64) -> Result<(FieldNumber, WireType), Error> {
     ))
 }
 
-fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
+pub fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
     ((num.get() as u64) << 3) | (typ as u64 & 7)
 }
 
@@ -324,7 +324,7 @@ mod tests {
         let mut b = BytesMut::new();
         let num = FieldNumber::try_from(1).unwrap();
         append_tag(&mut b, num, WireType::StartGroup);
-        assert_eq!(consume_group(num, &mut b.freeze()), Err(Error::EOF));
+        assert_eq!(consume_group(num, &mut b.freeze()), Err(Error::Eof));
     }
 
     #[test]
@@ -334,7 +334,7 @@ mod tests {
         let mut b = BytesMut::new();
         append_tag(&mut b, num2, WireType::StartGroup);
         append_tag(&mut b, num2, WireType::EndGroup);
-        assert_eq!(consume_group(num1, &mut b.freeze()), Err(Error::EOF));
+        assert_eq!(consume_group(num1, &mut b.freeze()), Err(Error::Eof));
     }
 
     #[test]
@@ -408,21 +408,21 @@ mod tests {
     #[test]
     fn varint_eof() {
         let mut b = Bytes::from_static(b"\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
         let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::EOF));
+        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
     }
 
     #[test]
@@ -510,13 +510,13 @@ mod tests {
     #[test]
     fn bytes_eof() {
         let mut b = Bytes::from_static(b"");
-        assert_eq!(consume_bytes(&mut b), Err(Error::EOF));
+        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
 
         let mut b = Bytes::from_static(b"\x01");
-        assert_eq!(consume_bytes(&mut b), Err(Error::EOF));
+        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
 
         let mut b = Bytes::from_static(b"\x05hell");
-        assert_eq!(consume_bytes(&mut b), Err(Error::EOF));
+        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
 
     #[test]
     fn fixed32_eof() {
-        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::EOF));
+        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::Eof));
     }
 
     #[test]
@@ -584,7 +584,7 @@ mod tests {
 
     #[test]
     fn fixed64_eof() {
-        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::EOF));
+        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::Eof));
     }
 
     #[test]
@@ -614,7 +614,7 @@ mod tests {
 
     #[test]
     fn tag_eof() {
-        assert_eq!(consume_tag(&mut Bytes::from("")), Err(Error::EOF));
+        assert_eq!(consume_tag(&mut Bytes::from("")), Err(Error::Eof));
     }
 
     #[test]
