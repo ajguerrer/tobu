@@ -11,16 +11,16 @@ level maturity. Speed is important too, but only to the point of quenching curio
 There are already protobuf implementations out in the wild, most notably [`prost`], the library
 powering [`tonic`]. Why make another?
 
-As many do, to get a better grasp of rust, I felt the need to work on a project. I took personal
+At some point, to get a better grasp of rust, I felt the need to work on a project. I took personal
 interest in [`protobuf`] and [`grpc`]. In particular, I wanted to try making a server that 
 supports the [`transcoding`] `google.api.http` annotation.
 
 ```protobuf
+// option will auto-magically transcode a HTTP GET /v1/shelves/{shelf}
+// into a GetShelf(GetShelfRequest) for a gRPC server and also transcode
+// the Shelf response into a JSON object
 rpc GetShelf(GetShelfRequest) returns (Shelf) {
   option (google.api.http) = { get: "/v1/shelves/{shelf}" };
-  // above will auto-magically transcode a HTTP GET /v1/shelves/{shelf}
-  // into a GetShelf(GetShelfRequest) for a gRPC server and also transcode
-  // the Shelf response into a JSON object
 }
 
 message GetShelfRequest {
@@ -46,7 +46,8 @@ a data format.
 
 ## Implementation
 
-For the moment, lets forget about serde. How should reflection be implemented?
+What follows is my documented experience writing this library. Please note that this is a learning
+process. I started this project right after reading [`The Rust Book`]. 
 
 ###  Reflection primer
 
@@ -76,6 +77,8 @@ A brief glance at the source code made it abundantly clear that my life was not 
 I tried to port the Go implementation to Rust. Lets look at an example:
 
 ```protobuf
+syntax = "proto3";
+
 message Simple {
     bool simple_bool = 1;
 }
@@ -147,13 +150,13 @@ func TestReflection(t *testing.T) {
 }
 ```
 
-Everything up through the call to `ProtoReflect` should be clear, but its only the tip of the
-iceberg. We know how the descriptor information, `MessageInfo`, could be accessed through the
-`atomicMessageInfo` pointer but, how does a generic type like `MessageState` magically access
+Everything up through the call to `ProtoReflect` so far is clear, but its only the tip of the
+iceberg. I know how the descriptor information, `MessageInfo`, could be accessed through the
+`atomicMessageInfo` pointer. But, how does a generic type like `MessageState` magically access
 something concrete like `s.SimpleBool` by using its descriptor? 
 
-The process is complicated so first lets do a little backtracking. What and where is this
-descriptor? Within the generated Go code is an array of byes:
+The process is complicated so lets do a little backtracking. What and where is this
+descriptor? Within the generated Go code, looking very conspicuous, is an array of byes:
 
 ```go
 var file_simple_proto_rawDesc = []byte{
@@ -211,32 +214,56 @@ reflection capabilities built into the language, so this practice becomes somewh
 
 ### But what about Rust? A glance at `Pin`
 
-A Rust analog to the implementation above would have me using `mem::transmute` combined with
-something like [`rel-ptr`]. `rel-ptr` looks really cool! But, a brief glance into either of those
-two and I am feeling just a smidge uncomfortable. Even with those tool, Rust doesn't have the same
-reflective capabilities as Go, so it truly feels like casting into a sea of bytes and praying for
-correctness. The point of this project is to learn and Rust seems to be telling me to find another
-way. Lets take the hint.
+Back to rust. For the moment, lets forget about serde. How should reflection be implemented?
 
-Well, what about a generic field, such as an enum, that holds a reference to the data in the struct.
-That generic field could also contain references to generated descriptor data, but lets leave that
-out for now. Something like:
+A Rust analog to the implementation above would involve gratuitous amounts [`mem::transmute`] A
+brief glance at the documentation or the [`nomicon`] and I am feeling just a smidge uncomfortable.
+Rust doesn't have the same reflective capabilities as Go, so it truly feels like jumping into a sea
+of bytes and praying for correctness. The point of this project is to learn and Rust seems to be
+telling me to find another way. Lets take the hint.
+
+How about making our own type like `MessageState` - lets call it `Reflection` - that holds a
+reference to the other data in the struct. `Reflection` would also contain references to generated
+descriptor data, but lets leave that out for now. To reflect, just return `reflect`, a field that
+all generated protobuf messages could have in common.
 
 
 ```rust
+// Imagine this contains a reference to static descriptor info too.
+pub struct Reflection<'a> {
+    pub fields: Vec<Value<'a>>,
+}
+
+// Imagine more variants here.
 pub enum Value<'a> {
     Bool(&'a bool),
     I32(&'a i32),
 }
 
+// A generated message with internal message state for reflection.
 pub struct Simple<'a> {
-    info: Value<'a>,
+    reflect: Reflection<'a>,
     pub simple_bool: bool,
 }
 ```
 
-To reflect, just return `info`, a field and type that all generated protobuf messages could have in
-common. However, I worry for my users; that lifetime looks contagious. Pointers it is.
+Of course, its not quite this easy. References can never be null so its not possible to make a
+struct that points to itself like this.
+
+```rust
+impl<'a> Simple<'a> {
+    pub fn new() -> Self {
+        Simple {
+            reflect: Reflection {
+                fields: vec![Value::Bool(/* ??? */)],
+            },
+            simple_bool: false,
+        }
+    }
+}
+```
+
+Thankfully there is a type for that and all the cool containers are using it!
 
 ```rust
 use std::ptr::NonNull;
@@ -246,32 +273,45 @@ pub enum Value {
     I32(NonNull<i32>),
 }
 
-pub struct Simple {
-    info: Value,
-    pub simple_bool: bool,
-}
-
 impl Simple {
     pub fn new() -> Self {
         let mut s = Simple {
-            info: Value::Bool(NonNull::dangling()),
+            reflect: Reflection {
+                fields: vec![Value::Bool(NonNull::dangling())],
+            },
             simple_bool: false,
         };
-        s.info = Value::Bool(NonNull::from(&s.simple_bool));
+        s.reflect.fields[0] = Value::Bool(NonNull::from(&s.simple_bool));
         s
     }
+    
+    pub fn reflect(&self) -> &Reflection {
+        &self.reflect
+    }
+
+    pub fn reflect_mut(&mut self) -> &mut Reflection {
+        &mut self.reflect
+    }
 }
+
 ```
 
-It's a little clever, but it could work. Well, it doesn't! Check out this test:
+Its very nice how the lifetime went away too. Borrowing `reflect`, which is bound to the lifetime of
+the object holding it, will always be good enough. Okay, so this code is little clever, but it
+compiles! Does it work? Nope! Check out this test:
 
 ```rust
 #[test]
 fn it_works() {
     let s = Simple::new();
-    let v = match s.info {
-        Value::Bool(b) => b,
-        _ => panic!("Not a Value::Bool"),
+    
+    // If it wasn't for return value optimization, this would already be 
+    // unsound, but lets explicitly force a move to prove a point.
+    let s = s;
+
+    let v = match s.reflect().fields.get(0) {
+        Some(Value::Bool(v)) => v,
+        _ => unreachable!(),
     };
 
     assert_eq!(format!("{:p}", v.as_ptr()), format!("{:p}", &s.simple_bool));
@@ -279,44 +319,53 @@ fn it_works() {
 ```
 
 ```
-thread 'tests::it_works' panicked at 'assertion failed: `(left == right)`
-  left: `"0x7f472cc4e4c0"`,
- right: `"0x7f472cc4e518"`'
+thread 'it_works' panicked at 'assertion failed: `(left == right)`
+  left: `"0x7fc75c46f578"`,
+ right: `"0x7fc75c46f598"`'
 ```
 
-The object returned from `new` moved! Coming from C++, one of the nice things about Rust is how
-natural moving data feels. I almost forgot... until this happened. 
+Coming from C++, one of the nice things about Rust is how transparent moving data feels. I almost
+forgot I was doing it... until this happened. 
 
-But what now? After some searching, I found something called [`pin`]. The documentation even has an
-example for my use case, self-referential structs. I have never seen anything like `Pin` before.
-What does it do? Thanks to [`Boats`], [`Jon`], and the [`async-book`], I was finally able to wrap my
-head around it and what a wild concept! 
+Okay so now what? Surely I am not the only one who wants to do this. Soon enough, I found something
+called [`pin`]. The documentation even has an example for my use case, something called
+self-referential structs. I had never seen anything like `Pin` before, but thanks to [`Boats`],
+[`Jon`], and the [`async-book`], I was finally able to wrap my head around it! 
 
-As magical as it is, `Pin` will not solve my problem. Yes, its important to use it when writing
-self-referential structs, but it only turns runtime errors, if caught, into compile time errors. It
-doesn't help make the move work. It's more of a safety `Pin` (sorry!). 
+As magical as it is, `Pin` won't actually solve the problem. Yes, its important to use it when
+writing self-referential structs, but it's purpose is to turn runtime bugs into compile time errors;
+it doesn't prevent moves from happening. I'd say its more of a safety `Pin` (sorry!). 
 
-Ultimately, the real solution is fundamental to any programming language that brings the developer
-close to the hardware: use the heap. Heap allocation and `Pin` are a package deal. So much so, that
-`Box` has its own [constructor](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.pin)
-specifically for pinning objects to the heap. Constructors for self-referential structs are designed
-such that heap allocation is forced:
+Ultimately, the problem is much more fundamental. I am using the stack. Things on the stack get
+moved and fall out of scope. So, I need to use the heap. Its not immediately obvious, but heap
+allocation and `Pin` are a package deal. Rust drops little hints like `Box` having its own
+[constructor](https://doc.rust-lang.org/std/boxed/struct.Box.html#method.pin) specifically for
+pinning objects to the heap. Also, in the example from the `pin` documentation , the constructor for
+the self-referential struct returns a `Pin<Box<Self>>`.
 
 ```rust
-fn new() -> Pin<Box<Self>>
+fn new(data: String) -> Pin<Box<Self>> { /* ... */ }
 ```
 
-Users interact with heap allocated objects indirectly through pointers and the pointer is free to
-move around all it wants. Yes, you can pin objects to the stack, but its incredibly limiting because
-stack data gets moved all the time in Rust.
+Thats not a coincidence; it forces heap allocation. Heap allocated objects are accessed indirectly
+through pointers, and those pointers are free to move around all they want. 
+
+By the way, objects may be pinned to the stack, but its incredibly limiting, so the use cases for it
+are rare. It took me far too long to accept that.
 
 Unfortunately, heap allocating a type like `Simple` feels a little heavy and users would have to
-interact with a `Box` instead of the type directly, all for a feature most will never use. Lets
-keep searching for alternatives.
+interact with a `Box` instead of the type directly, all for a feature most will never use. 
 
-### `reflect-heavy` and `reflect-light`
+As a last gasp, I found another interesting concept called [`rel-ptr`]. This library could be used
+in a very similar way to [`Offset`] with no `transmute` necessary. However, concerns have been
+raised that the implementation is [unsound](https://github.com/RustyYato/rel-ptr/issues/3). I think
+I would want support from the language for something like that anyway. Lets keep searching for
+alternatives.
 
-My next big idea is conversion. Something like the [`From`] trait, but fancier.
+### Type conversion: heavy and light
+
+How about something a little more conventional? Lets make a conversion trait, much like [`From`], but
+fancier.
 
 ```rust
 pub trait Reflect: Sized {
@@ -333,10 +382,10 @@ pub struct Message {
 }
 ```
 
-Damn, thats fancy. Whats that [`PhantomData`]? Usually when a type is generic over type
-parameter `T`, then the compiler rightfully gets mad if the type doesn't actually use a `T`.
-However, there are some use cases where keeping that information around is important. In my case,
-its used to track which concrete message to reflect back to.
+Damn, thats fancy. Whats that [`PhantomData`]? When a type is generic over type parameter `T`, the
+compiler rightfully gets mad if the type doesn't actually use a `T`. However, there are some use
+cases where keeping that information around is important. `Reflection` uses it to track which
+concrete message type to go back to, via `absorb`, the opposite of `reflect`.
 
 ```rust
 impl<T> Reflection<T> {
@@ -358,7 +407,7 @@ where
 }
 ```
 
-Assuming `Simple` implements `Reflect`, converting to and from a `Reflection` looks like:
+Assuming `Simple` can be converted to/from a `Message`, reflection looks like:
 
 ```rust
 let s: Simple = Simple::new();
@@ -366,21 +415,234 @@ let r: Reflection<Simple> = s.reflect();
 let s: Simple = r.absorb().unwrap();
 ```
 
+All that's left is to implement the actual conversion. As you may have guessed from the section
+title, I found two type conversion candidates to compare: heavy and light.
+
+Before getting into it, lets flex the protobuf type system a little more by making a new message 
+`Complex`.
+
+```protobuf
+syntax = "proto2";
+
+message Complex {
+  optional Enum optional_enum = 1;
+  repeated bytes repeated_bytes = 2;
+  map<int32, Nested> map_message = 3;
+
+  enum Enum { 
+    ZERO = 0;
+    ONE = 1;
+    TEN = 10;
+  }
+
+  message Nested {
+    optional string optional_string = 1;
+  }
+}
+``` 
+
+Lets also fully flesh out `Value`, but this time without the references.
+
+```rust
+use std::collections::HashMap;
+
+pub enum Value {
+    Bool(bool),
+    Bytes(Vec<u8>),
+    Enum(Enum),
+    F32(f32),
+    F64(f64),
+    I32(i32),
+    I64(i64),
+    Message(Message),
+    String(String),
+    U32(u32),
+    U64(u64),
+    List(Vec<Value>),
+    Map(HashMap<Value, Value>),
+}
+```
+
+This design won't go out of its way to prevent invalid types around `List` and `Map`. For example,
+its possible to create a list of maps, which isn't definable in protobuf syntax. Also its really
+nice when the template type parameters of `List` and `Map` because the per element conversion
+to/from a `Value` is no longer necessary. Here is a definition that utilizes the type system better:
+
+```rust
+#[derive(Debug, Clone)]
+pub enum Value {
+    Bool(Rule<bool>),
+    Bytes(Rule<Vec<u8>>),
+    Enum(Rule<Enum>),
+    F32(Rule<f32>),
+    F64(Rule<f64>),
+    I32(Rule<i32>),
+    I64(Rule<i64>),
+    Message(Rule<Message>),
+    String(Rule<String>),
+    U32(Rule<u32>),
+    U64(Rule<u64>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Rule<T> {
+    Singular(T),
+    Repeated(Vec<T>),
+    Map(Key<T>),
+}
+
+#[derive(Debug, Clone)]
+pub enum Key<T> {
+    Bool(HashMap<bool, T>),
+    I32(HashMap<i32, T>),
+    I64(HashMap<i64, T>),
+    String(HashMap<String, T>),
+    U32(HashMap<u32, T>),
+    U64(HashMap<u64, T>),
+}
+```
+
+Granted, `Value` becomes less intuitive, but lets give it a try. Note, it is still possible for
+`absorb` to fail. For example, `Enum` values may not match a valid variant or the `field`s in
+`Message` may not match the descriptor. This is why `absorb` returns a `Result`. Without further
+ado, on to conversion.
+
+#### The heavy conversion
+
+This is the most direct approach. Compiling our protobuf messages would produce rust structs that
+look like:
+
+```rust
+pub struct Simple {
+    pub simple_bool: bool,
+}
+
+pub struct Complex {
+    pub optional_enum: Option<ComplexEnum>,
+    pub repeated_bytes: Vec<Vec<u8>>,
+    pub map_message: HashMap<i32, ComplexNested>,
+}
+
+#[repr(i32)]
+pub enum ComplexEnum {
+    One = 1,
+    Two = 2,
+    Ten = 10,
+}
+
+pub struct ComplexNested {
+    pub optional_string: Option<String>,
+}
+```
+
+Each struct has fields that are intuitive enough to be made public; this wont be the case for the
+light conversion. But as a tradeoff, the fields are raw and need to be fully processed to produce a
+`Reflection`. 
+
+```rust
+
+impl From<Complex> for Message {
+    fn from(m: Complex) -> Self {
+        Message {
+            fields: vec![
+                m.optional_enum
+                    .map(|v| Value::Enum(Rule::Singular(Enum { number: v as i32 }))),
+                Some(Value::Bytes(Rule::Repeated(m.repeated_bytes))),
+                Some(Value::Message(Rule::Map(Key::I32(
+                    m.map_message
+                        .into_iter()
+                        .map(|(k, v)| (k, v.into()))
+                        .collect(),
+                )))),
+            ],
+        }
+    }
+}
+
+impl TryFrom<Message> for Complex {
+    type Error = AbsorbError;
+
+    fn try_from(m: Message) -> Result<Self, Self::Error> {
+        let mut fields = m.fields.into_iter();
+
+        if fields.len() != 3 {
+            return Err(AbsorbError::invalid_length(3, fields.len()));
+        }
+
+        Ok(Complex {
+            optional_enum: fields
+                .next()
+                .unwrap()
+                .map(|v| match v {
+                    Value::Enum(Rule::Singular(v)) => ComplexEnum::new(v.number)
+                        .ok_or_else(|| AbsorbError::invalid_enum("ComplexEnum", &v)),
+                    v => Err(AbsorbError::invalid_type("optional_enum", &v)),
+                })
+                .transpose()?,
+            repeated_bytes: match fields
+                .next()
+                .unwrap()
+                .unwrap_or_else(|| Value::Bytes(Rule::Repeated(Vec::new())))
+            {
+                Value::Bytes(Rule::Repeated(v)) => Ok(v),
+                v => Err(AbsorbError::invalid_type("repeated_bytes", &v)),
+            }?,
+            map_message: match fields
+                .next()
+                .unwrap()
+                .unwrap_or_else(|| Value::Message(Rule::Map(Key::I32(HashMap::new()))))
+            {
+                Value::Message(Rule::Map(Key::I32(v))) => {
+                    v.into_iter().map(|(k, v)| Ok((k, v.try_into()?))).collect()
+                }
+                v => Err(AbsorbError::invalid_type("map_message", &v)),
+            }?,
+        })
+    }
+}
+
+
+```
+
+Yup, its a little heavy, but rust iterators are really pulling weight. `AbsorbError` is a
+[`thiserror`] enum with constructors to make the code a little cleaner.
+
+#### The light conversion
+
+A lighter approach to conversion would be to compile each concrete message into a struct with a
+single private `Message` field. Fields are accessed through special accessor methods that can
+perform the conversion between `Value`s in a message.
+
+In true rust fashion, each field has a mut and non-mut assessor method.
+
+- `field(&self) -> &Field`
+- `field_mut(&mut self) -> &mut Field`
+
+For messages defined with "proto2" syntax, each field has a couple additional methods for dealing
+with nullability:
+
+- `has_field(&self) -> bool`
+- `clear_field(&mut self)`
+
 [`prost`]: https://github.com/danburkert/prost
 [`tonic`]: https://github.com/hyperium/tonic
 [`protobuf`]: https://github.com/protocolbuffers/protobuf
 [`grpc`]: https://github.com/grpc/grpc
 [`serde`]: https://github.com/serde-rs/serde
 [`transcoding`]: https://cloud.google.com/endpoints/docs/grpc/transcoding
+[`The Rust Book`]: https://doc.rust-lang.org/book/
 [`describe`]: https://github.com/protocolbuffers/protobuf/blob/master/src/google/protobuf/descriptor.proto
 [`protobuf-go`]: https://github.com/protocolbuffers/protobuf-go
 [`sync::OnceCell<T>`]: https://docs.rs/once_cell
 [`Offset`]: https://golang.org/pkg/reflect/#StructField
 [`Value`]: https://golang.org/pkg/reflect/#Value
-[`rel-ptr`]: https://github.com/RustyYato/rel-ptr
+[`mem::transmute`]: https://doc.rust-lang.org/std/mem/fn.transmute.html
+[`nomicon`]: https://doc.rust-lang.org/nomicon/transmutes.html
 [`pin`]: https://doc.rust-lang.org/std/pin/
 [`Boats`]: https://without.boats/
 [`Jon`]: https://www.youtube.com/c/JonGjengset
 [`async-book`]: https://rust-lang.github.io/async-book/04_pinning/01_chapter.html
+[`rel-ptr`]: https://github.com/RustyYato/rel-ptr
 [`From`]: https://doc.rust-lang.org/std/convert/trait.From.html
 [`PhantomData`]: https://doc.rust-lang.org/std/marker/struct.PhantomData.html
+[`thiserror`]: https://docs.rs/thiserror
