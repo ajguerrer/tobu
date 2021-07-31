@@ -2,9 +2,10 @@
 
 `serde-protobuf` is a [`serde`] protobuf data format with first class support for reflection.
 
-This library is meant for academic purposes. It's primary feature is a full writeup of my journey
+This library is meant for academic purposes. It's primary feature is a full write up of my journey
 through rust and creating this library. While correctness is important, do not expect production
-level maturity. Speed is important too, but only to the point of quenching curiosity.
+level maturity. Speed and benchmarking are important too, but only to the point of quenching
+curiosity.
 
 ## Motivation
 
@@ -12,14 +13,14 @@ There are already protobuf implementations out in the wild, most notably [`prost
 powering [`tonic`]. Why make another?
 
 At some point, to get a better grasp of rust, I felt the need to work on a project. I took personal
-interest in [`protobuf`] and [`grpc`]. In particular, I wanted to try making a server that 
+interest in [`protobuf`] and [`gRPC`]. In particular, I wanted to try making a server that 
 supports the [`transcoding`] `google.api.http` annotation.
 
 ```protobuf
-// option will auto-magically transcode a HTTP GET /v1/shelves/{shelf}
-// into a GetShelf(GetShelfRequest) for a gRPC server and also transcode
-// the Shelf response into a JSON object
-rpc GetShelf(GetShelfRequest) returns (Shelf) {
+// transcode between HTTP GET /v1/shelves/{shelf} and GetShelf gRPC 
+// where the field shelf in GetShelfRequest maps to {shelf} in the URI. 
+// Note: All protobuf messages have a JSON representation too.
+rpc GetShelf(GetShelfRequest) returns (GetShelfResponse) {
   option (google.api.http) = { get: "/v1/shelves/{shelf}" };
 }
 
@@ -28,8 +29,8 @@ message GetShelfRequest {
 }
 ```
 
-With it gRPC servers could effortlessly add a analog HTTP/JSON interface to their API. This is
-especially important for public facing servers since HTTP/JSON is so widespread.
+With this option, gRPC servers could effortlessly add a analog HTTP/JSON interface to their API.
+This is especially important for public facing servers since HTTP/JSON is so widespread.
 
 Feeling stoked, I investigated what it would take to support it. What a rabbit hole that turned out
 to be! The annotation is a custom option. Custom options are `proto2` extensions that require
@@ -64,7 +65,7 @@ extension to `google.protobuf.MessageOptions`.
 For myself, the developer of this library, I would like to to create a protobuf compiler plugin that
 is capable of generating these descriptors in rust as well as a way for the generated types to
 access their associated descriptor. The generated code can then plug into my reflection library and
-its done! Piece of cake right? Right... lets begin.
+its done! Piece of cake right? Right... Let's begin.
 
 ### Deep dive into `protobuf-go`
 
@@ -105,7 +106,7 @@ type MessageState struct {
 }
 ```
 
-and it happens to always be the first field in the struct. This is not by coincidence. To access the
+And it happens to always be the first field in the struct. This is not by coincidence. To access the
 reflection interface, users call `ProtoReflect`. Here is the implementation:
 
 ```go
@@ -135,7 +136,7 @@ func (ms *messageState) StoreMessageInfo(mi *MessageInfo) {
 Without getting into the gory details, this function does two things:
 
 1. It casts `*Simple` to a `*MessageState` which implements the reflective interface `Message`.
-1. It stores some static descriptor data into `atomicMessageInfo` if it hasn't been stored already.
+1. It stores some static descriptor data into `atomicMessageInfo` if it has not been stored already.
 
 With this critical piece of information in mind, lets look at an example of reflection in action:
 
@@ -166,10 +167,10 @@ var file_simple_proto_rawDesc = []byte{
 ```
 
 `file_simple_proto_rawDesc` is a serialized `FileDescriptorProto` containing all the static
-information for `Simple`. These byes get lazily unmarshalled in various stages as needed during runtime.
-For example, calling `Message::Descriptor` initializes less static data than calling `Message::Get`.
-In Rust, this is equivalent to wrapping the fields and nested fields in `MessageInfo` with
-[`sync::OnceCell<T>`]. 
+information for `Simple`. These byes get lazily unmarshalled in various stages as needed during
+runtime. For example, calling `Message::Descriptor` initializes less static data than calling
+`Message::Get`. In Rust, this is equivalent to wrapping the fields and nested fields in
+`MessageInfo` with [`sync::OnceCell<T>`]. 
 
 Speaking of which, lets take a look at the fields in `MessageInfo`. For the purpose of explanation,
 some liberties were taken to simplify the code.
@@ -216,11 +217,11 @@ reflection capabilities built into the language, so this practice becomes somewh
 
 Back to rust. For the moment, lets forget about serde. How should reflection be implemented?
 
-A Rust analog to the implementation above would involve gratuitous amounts [`mem::transmute`] A
-brief glance at the documentation or the [`nomicon`] and I am feeling just a smidge uncomfortable.
-Rust doesn't have the same reflective capabilities as Go, so it truly feels like jumping into a sea
-of bytes and praying for correctness. The point of this project is to learn and Rust seems to be
-telling me to find another way. Lets take the hint.
+A Rust analog to the implementation above would involve gratuitous amounts of [`mem::transmute`].
+Just a brief glance at the documentation or the [`nomicon`] and I am feeling just a smidge
+uncomfortable. Rust doesn't have the same reflective capabilities as Go, so it truly feels like
+casting off into a sea of bytes and praying for correctness. The point of this project is to learn
+and Rust seems to be telling me to find another way. Lets take the hint.
 
 How about making our own type like `MessageState` - lets call it `Reflection` - that holds a
 reference to the other data in the struct. `Reflection` would also contain references to generated
@@ -325,7 +326,7 @@ thread 'it_works' panicked at 'assertion failed: `(left == right)`
 ```
 
 Coming from C++, one of the nice things about Rust is how transparent moving data feels. I almost
-forgot I was doing it... until this happened. 
+forgot I was doing it... Until this happened. 
 
 Okay so now what? Surely I am not the only one who wants to do this. Soon enough, I found something
 called [`pin`]. The documentation even has an example for my use case, something called
@@ -347,7 +348,7 @@ the self-referential struct returns a `Pin<Box<Self>>`.
 fn new(data: String) -> Pin<Box<Self>> { /* ... */ }
 ```
 
-Thats not a coincidence; it forces heap allocation. Heap allocated objects are accessed indirectly
+That's not a coincidence; it forces heap allocation. Heap allocated objects are accessed indirectly
 through pointers, and those pointers are free to move around all they want. 
 
 By the way, objects may be pinned to the stack, but its incredibly limiting, so the use cases for it
@@ -382,7 +383,7 @@ pub struct Message {
 }
 ```
 
-Damn, thats fancy. Whats that [`PhantomData`]? When a type is generic over type parameter `T`, the
+Damn, that's fancy. Whats that [`PhantomData`]? When a type is generic over type parameter `T`, the
 compiler rightfully gets mad if the type doesn't actually use a `T`. However, there are some use
 cases where keeping that information around is important. `Reflection` uses it to track which
 concrete message type to go back to, via `absorb`, the opposite of `reflect`.
@@ -415,7 +416,7 @@ let r: Reflection<Simple> = s.reflect();
 let s: Simple = r.absorb().unwrap();
 ```
 
-All that's left is to implement the actual conversion. As you may have guessed from the section
+ell that's left is to implement the actual conversion. As you may have guessed from the section
 title, I found two type conversion candidates to compare: heavy and light.
 
 Before getting into it, lets flex the protobuf type system a little more by making a new message 
@@ -523,7 +524,6 @@ pub struct Complex {
     pub map_message: HashMap<i32, ComplexNested>,
 }
 
-#[repr(i32)]
 pub enum ComplexEnum {
     One = 1,
     Two = 2,
@@ -536,7 +536,7 @@ pub struct ComplexNested {
 ```
 
 Each struct has fields that are intuitive enough to be made public; this wont be the case for the
-light conversion. But as a tradeoff, the fields are raw and need to be fully processed to produce a
+light conversion. But as a trade-off, the fields are need to be fully processed to produce a
 `Reflection`. 
 
 ```rust
@@ -564,7 +564,6 @@ impl TryFrom<Message> for Complex {
 
     fn try_from(m: Message) -> Result<Self, Self::Error> {
         let mut fields = m.fields.into_iter();
-
         if fields.len() != 3 {
             return Err(AbsorbError::invalid_length(3, fields.len()));
         }
@@ -579,38 +578,30 @@ impl TryFrom<Message> for Complex {
                     v => Err(AbsorbError::invalid_type("optional_enum", &v)),
                 })
                 .transpose()?,
-            repeated_bytes: match fields
-                .next()
-                .unwrap()
-                .unwrap_or_else(|| Value::Bytes(Rule::Repeated(Vec::new())))
-            {
-                Value::Bytes(Rule::Repeated(v)) => Ok(v),
-                v => Err(AbsorbError::invalid_type("repeated_bytes", &v)),
+            repeated_bytes: match fields.next().unwrap() {
+                Some(Value::Bytes(Rule::Repeated(v))) => Ok(v),
+                Some(v) => Err(AbsorbError::invalid_type("repeated_bytes", &v)),
+                None => Err(AbsorbError::not_optional("repeated_bytes")),
             }?,
-            map_message: match fields
-                .next()
-                .unwrap()
-                .unwrap_or_else(|| Value::Message(Rule::Map(Key::I32(HashMap::new()))))
-            {
-                Value::Message(Rule::Map(Key::I32(v))) => {
+            map_message: match fields.next().unwrap() {
+                Some(Value::Message(Rule::Map(Key::I32(v)))) => {
                     v.into_iter().map(|(k, v)| Ok((k, v.try_into()?))).collect()
                 }
-                v => Err(AbsorbError::invalid_type("map_message", &v)),
+                Some(v) => Err(AbsorbError::invalid_type("map_message", &v)),
+                None => Err(AbsorbError::not_optional("map_message")),
             }?,
         })
     }
 }
-
-
 ```
 
-Yup, its a little heavy, but rust iterators are really pulling weight. `AbsorbError` is a
+Heavy indeed, but iterators and match syntax are really pulling weight. `AbsorbError` is a
 [`thiserror`] enum with constructors to make the code a little cleaner.
 
 #### The light conversion
 
 A lighter approach to conversion would be to compile each concrete message into a struct with a
-single private `Message` field. Fields are accessed through special accessor methods that can
+single private `Message` field. Fields are accessed through special access methods that can
 perform the conversion between `Value`s in a message.
 
 In true rust fashion, each field has a mut and non-mut assessor method.
@@ -623,6 +614,176 @@ with nullability:
 
 - `has_field(&self) -> bool`
 - `clear_field(&mut self)`
+
+Here would be the part where I show you a clean, simple conversion. Except, there still needs to be
+validation. That's a problem because messages and enums require a costly conversion just to
+be validated and subsequently be discarded. Take for example, the `map_message` field:
+
+```rust
+match &m.fields[2].get_or_insert(Value::Message(Rule::Map(Key::I32(HashMap::new())))) {
+    Value::Message(Rule::Map(Key::I32(v))) => v
+        .values()
+        .map(|v| ComplexNested::try_from(v.clone()))
+        .collect::<Result<_, _>>(),
+    v => return Err(AbsorbError::invalid_type("map_message", v)),
+};
+```
+
+To avoid the `clone`, messages could implement an additional [`AsRef`] conversion, but the
+documentation does not recommend using it for conversions that are costly or can fail. Ultimately, the
+message just needs to be validated, so lets make a `validate` method that takes a reference to a
+`Message` and spits out an `AbsorbError` if something is wrong.
+
+```rust
+#[repr(transparent)]
+pub struct Complex {
+    inner: Message,
+}
+
+impl Complex {
+    fn validate(m: &Message) -> Option<AbsorbError> {
+        if m.fields.len() != 3 {
+            return Some(AbsorbError::invalid_length(3, m.fields.len()));
+        }
+
+        match &m.fields[0] {
+            Some(Value::Enum(Rule::Singular(v))) => ComplexEnum::validate(v),
+            Some(v) => Some(AbsorbError::invalid_type("optional_enum", v)),
+            None => None,
+        }?;
+
+        match &m.fields[1] {
+            Some(Value::Bytes(Rule::Repeated(_))) => None,
+            Some(v) => Some(AbsorbError::invalid_type("repeated_bytes", v)),
+            None => Some(AbsorbError::not_optional("repeated_bytes")),
+        }?;
+
+        match &m.fields[2] {
+            Some(Value::Message(Rule::Map(Key::I32(v)))) => {
+                v.values().find_map(ComplexNested::validate)
+            }
+            Some(v) => Some(AbsorbError::invalid_type("map_message", v)),
+            None => Some(AbsorbError::not_optional("map_message")),
+        }
+    }
+}
+
+impl TryFrom<Message> for Complex {
+    type Error = AbsorbError;
+
+    fn try_from(m: Message) -> Result<Self, Self::Error> {
+        if let Some(err) = Self::validate(&m) {
+            return Err(err);
+        }
+
+        Ok(Complex { inner: m })
+    }
+}
+```
+
+All that's left is to make access methods. This is mostly just a ton of boiler plate, with the
+exception of `Message` and `Enum` fields which need to be represented as concrete types.
+
+```rust
+#[repr(transparent)]
+pub struct Complex {
+    inner: Message,
+}
+
+#[repr(i32)]
+pub enum ComplexEnum {
+    One = 1,
+    Two = 2,
+    Ten = 10,
+}
+
+#[repr(transparent)]
+pub struct Enum {
+    pub number: i32,
+}
+
+impl Complex {
+    pub fn optional_enum(&self) -> ComplexEnum {
+        match &self.inner.fields[0] {
+            Some(Value::Enum(Rule::Singular(v))) => unsafe {
+                // Safety: ComplexEnum is repr(i32) and
+                // Enum is a repr(transparent) wrapper around i32
+                *(v as *const Enum as *const ComplexEnum)
+            },
+            Some(_) => unreachable!(),
+            None => ComplexEnum::default(),
+        }
+    }
+
+    pub fn map_message(&self) -> &HashMap<i32, ComplexNested> {
+        match &self.inner.fields[2] {
+            Some(Value::Message(Rule::Map(Key::I32(v)))) => unsafe {
+                // Safety: ComplexNested is a repr(transparent) wrapper around a Message
+                &*(v as *const HashMap<i32, Message> as *const HashMap<i32, ComplexNested>)
+            },
+            _ => unreachable!(),
+        }
+    }
+
+}
+```
+
+Yep, `unsafe`! As noted in the comment, rust has some ability to control the layout of types. Here,
+concrete `Messages` and `Enums` are [`newtype`]s that can take advantage of `repr(transparent)`.
+This will guarantee the newtype and the type it wraps have the same representation. Therefore, this
+bit of unsafe is sound. In fact, David Tolnay, a person much smarter than myself, has a crate for
+that called [`ref-cast`]. 
+
+#### Comparing heavy and light
+
+And now for the rusults! To benchmark, I used [`criterion`]. I wont go into detail about the
+implementation of the benchmark because its fairly dry and the criterion API is quite simple. Feel
+free to take a look at the benches here. I split the benchmarks into groups so that heavy and light
+implementations can be side-by-side compared based on 5 categories, per message:
+
+- `new`: Construct a default concrete message.
+- `access`: Access all the fields of the message without mutation.
+- `mutate`: Mutate all the fields of the message.
+- `reflect`: Reflect a non-empty message. See implementation for more details.
+- `absorb`: Absorb a reflection of a non-empty message. See implementation for more details.
+
+```
+test complex/new/heavy ... bench:          23 ns/iter (+/- 6)
+test complex/new/light ... bench:          67 ns/iter (+/- 8)
+
+test complex/access/heavy ... bench:           5 ns/iter (+/- 1)
+test complex/access/light ... bench:          14 ns/iter (+/- 4)
+
+test complex/mutate/heavy ... bench:         338 ns/iter (+/- 23)
+test complex/mutate/light ... bench:         458 ns/iter (+/- 22)
+
+test complex/reflect/heavy ... bench:         392 ns/iter (+/- 61)
+test complex/reflect/light ... bench:          14 ns/iter (+/- 1)
+
+test complex/absorb/heavy ... bench:         462 ns/iter (+/- 120)
+test complex/absorb/light ... bench:          23 ns/iter (+/- 51)
+
+test simple/new/heavy ... bench:           2 ns/iter (+/- 0)
+test simple/new/light ... bench:          38 ns/iter (+/- 1)
+
+test simple/access/heavy ... bench:           1 ns/iter (+/- 0)
+test simple/access/light ... bench:           3 ns/iter (+/- 1)
+
+test simple/mutate/heavy ... bench:           0 ns/iter (+/- 0)
+test simple/mutate/light ... bench:          49 ns/iter (+/- 16)
+
+test simple/reflect/heavy ... bench:          39 ns/iter (+/- 28)
+test simple/reflect/light ... bench:          14 ns/iter (+/- 2)
+
+test simple/absorb/heavy ... bench:          62 ns/iter (+/- 7)
+test simple/absorb/light ... bench:          21 ns/iter (+/- 1)
+```
+
+It comes as no surprise that there is no clear winner here. It'a trade-off between `new`, `access`,
+`mutate` and `reflect`, `absorb`. Light makes the reflection API seemingly constant-time with
+impressive performance gains, especially for messages with increasingly large amounts of data. But,
+oof! It really does pay for it by adding non-trivial overhead to what I anticipate to be the far
+more commonly used methods.
 
 [`prost`]: https://github.com/danburkert/prost
 [`tonic`]: https://github.com/hyperium/tonic
@@ -646,3 +807,7 @@ with nullability:
 [`From`]: https://doc.rust-lang.org/std/convert/trait.From.html
 [`PhantomData`]: https://doc.rust-lang.org/std/marker/struct.PhantomData.html
 [`thiserror`]: https://docs.rs/thiserror
+[`AsRef`]: https://doc.rust-lang.org/std/convert/trait.AsRef.html
+[`ref-cast`]: https://github.com/dtolnay/ref-cast
+[`newtype`]: https://doc.rust-lang.org/rust-by-example/generics/new_types.html
+[`criterion`]: https://github.com/bheisler/criterion.rs
