@@ -1,5 +1,5 @@
 [package]
-name = "serde_protobuf"
+name = "tobu"
 version = "0.1.0"
 authors = ["Andrew Guerrero <ajguerrer@gmail.com>"]
 edition = "2018"
