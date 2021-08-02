@@ -1,4 +1,4 @@
-# Tobu
+# Tobu (Work in Progress)
 
 `tobu` is a pro**tobu**f data format for [`serde`] with first class support for reflection.
 
