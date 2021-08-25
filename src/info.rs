@@ -1,3 +1,5 @@
+use crate::encoding::{field::FieldNumber, wire::WireType};
+
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MessageInfo {
     pub name: &'static str,
@@ -21,7 +23,7 @@ impl Default for Syntax {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct FieldInfo {
     pub name: &'static str,
-    pub number: i32,
+    pub number: FieldNumber,
     pub cardinality: Cardinality,
     pub ty: Type,
     pub type_name: &'static str,
@@ -65,6 +67,31 @@ pub enum Type {
     SFixed64,
     SInt32,
     SInt64,
+}
+
+impl Type {
+    pub fn wire_type(&self) -> WireType {
+        match self {
+            Type::Double => WireType::Fixed64,
+            Type::Float => WireType::Fixed32,
+            Type::Int64 => WireType::Varint,
+            Type::Uint64 => WireType::Varint,
+            Type::Int32 => WireType::Varint,
+            Type::Fixed64 => WireType::Fixed64,
+            Type::Fixed32 => WireType::Fixed32,
+            Type::Bool => WireType::Varint,
+            Type::String => WireType::Bytes,
+            Type::Group => WireType::StartGroup,
+            Type::Message => WireType::Bytes,
+            Type::Bytes => WireType::Bytes,
+            Type::Uint32 => WireType::Varint,
+            Type::Enum => WireType::Varint,
+            Type::SFixed32 => WireType::Fixed32,
+            Type::SFixed64 => WireType::Fixed64,
+            Type::SInt32 => WireType::Varint,
+            Type::SInt64 => WireType::Varint,
+        }
+    }
 }
 
 impl Default for Type {

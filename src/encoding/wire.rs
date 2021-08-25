@@ -1,6 +1,4 @@
-use std::{convert::TryFrom, result::Result};
-
-use bytes::{Buf, BufMut, Bytes, BytesMut};
+use std::{convert::TryFrom, io, result::Result};
 
 use super::{error::Error, field::FieldNumber};
 
@@ -45,41 +43,46 @@ pub enum WireValue {
     Varint(u64),
     Fixed32(u32),
     Fixed64(u64),
-    Bytes(Bytes),
+    Bytes(Vec<u8>),
     Group(Vec<(FieldNumber, WireValue)>),
 }
 
-pub fn consume_field(b: &mut Bytes) -> Result<(FieldNumber, WireValue), Error> {
+pub fn consume_field(b: &mut impl io::Read) -> Result<(FieldNumber, WireValue), Error> {
     let (num, typ) = consume_tag(b)?;
     Ok((num, consume_field_value(num, typ, b)?))
 }
 
-pub fn append_field(b: &mut BytesMut, num: FieldNumber, v: WireValue) {
+pub fn append_field(b: &mut impl io::Write, num: FieldNumber, v: WireValue) -> Result<(), Error> {
     match v {
         WireValue::Varint(v) => {
-            append_tag(b, num, WireType::Varint);
-            append_varint(b, v);
+            append_tag(b, num, WireType::Varint)?;
+            append_varint(b, v)?;
         }
         WireValue::Fixed32(v) => {
-            append_tag(b, num, WireType::Fixed32);
-            append_fixed32(b, v);
+            append_tag(b, num, WireType::Fixed32)?;
+            append_fixed32(b, v)?;
         }
         WireValue::Fixed64(v) => {
-            append_tag(b, num, WireType::Fixed64);
-            append_fixed64(b, v);
+            append_tag(b, num, WireType::Fixed64)?;
+            append_fixed64(b, v)?;
         }
         WireValue::Bytes(v) => {
-            append_tag(b, num, WireType::Bytes);
-            append_bytes(b, v);
+            append_tag(b, num, WireType::Bytes)?;
+            append_bytes(b, &v)?;
         }
         WireValue::Group(v) => {
-            append_tag(b, num, WireType::StartGroup);
-            append_group(b, num, v);
+            append_tag(b, num, WireType::StartGroup)?;
+            append_group(b, num, v)?;
         }
     }
+    Ok(())
 }
 
-fn consume_field_value(num: FieldNumber, typ: WireType, b: &mut Bytes) -> Result<WireValue, Error> {
+fn consume_field_value(
+    num: FieldNumber,
+    typ: WireType,
+    b: &mut impl io::Read,
+) -> Result<WireValue, Error> {
     match typ {
         WireType::Varint => Ok(WireValue::Varint(consume_varint(b)?)),
         WireType::Fixed32 => Ok(WireValue::Fixed32(consume_fixed32(b)?)),
@@ -90,44 +93,45 @@ fn consume_field_value(num: FieldNumber, typ: WireType, b: &mut Bytes) -> Result
     }
 }
 
-fn append_tag(b: &mut BytesMut, num: FieldNumber, typ: WireType) {
+pub fn append_tag(b: &mut impl io::Write, num: FieldNumber, typ: WireType) -> Result<(), Error> {
     append_varint(b, encode_tag(num, typ))
 }
 
-fn consume_tag(b: &mut Bytes) -> Result<(FieldNumber, WireType), Error> {
+fn consume_tag(b: &mut impl io::Read) -> Result<(FieldNumber, WireType), Error> {
     decode_tag(consume_varint(b)?)
 }
 
-fn size_tag(num: FieldNumber) -> usize {
+pub fn size_tag(num: FieldNumber) -> usize {
     size_varint(encode_tag(num, WireType::Varint))
 }
 
 // Varints are a variable length encoding for a u64.
 // To encode, a u64 is split every 7 bits and formed into a [u8] where the most
 // significant bit of each u8 is '1' unless its the most significant non-zero u8.
-fn append_varint(b: &mut BytesMut, v: u64) {
+pub fn append_varint(b: &mut impl io::Write, v: u64) -> Result<(), Error> {
     let mut v = v;
     while v >= 0x80 {
-        b.put_u8(((v & !0x80) | 0x80) as u8);
+        b.write(&[((v & !0x80) | 0x80) as u8])?;
         v >>= 7;
     }
-    b.put_u8(v as u8);
+    b.write(&[v as u8])?;
+    Ok(())
 }
 
-pub fn consume_varint(b: &mut Bytes) -> Result<u64, Error> {
+pub fn consume_varint(b: &mut impl io::Read) -> Result<u64, Error> {
     let mut y: u64 = 0;
+
     for i in 0..=9 {
-        if b.is_empty() {
+        let mut v = 0;
+        if b.read(std::slice::from_mut(&mut v))? != 1 {
             return Err(Error::Eof);
         }
-
-        let v = b.get_u8() as u64;
         // u64::MAX check
         if i == 9 && v > 1 {
             return Err(Error::Overflow);
         }
 
-        y += (v & !0x80) << (7 * i);
+        y += (v as u64 & !0x80) << (7 * i);
         if v < 0x80 {
             return Ok(y);
         }
@@ -142,49 +146,55 @@ pub fn size_varint(n: u64) -> usize {
     1 + (64u32 - n.leading_zeros()) as usize * 9 / 64
 }
 
-fn append_fixed32(b: &mut BytesMut, v: u32) {
-    b.put_u32_le(v);
+pub fn append_fixed32(b: &mut impl io::Write, v: u32) -> Result<(), Error> {
+    b.write(&v.to_le_bytes())?;
+    Ok(())
 }
 
-fn consume_fixed32(b: &mut Bytes) -> Result<u32, Error> {
-    if b.len() < 4 {
+pub fn consume_fixed32(b: &mut impl io::Read) -> Result<u32, Error> {
+    let mut v = [0; 4];
+    if b.read(&mut v)? != 4 {
         return Err(Error::Eof);
     }
 
-    Ok(b.get_u32_le())
+    Ok(u32::from_le_bytes(v))
 }
 
 pub fn size_fixed32() -> usize {
     4
 }
 
-fn append_fixed64(b: &mut BytesMut, v: u64) {
-    b.put_u64_le(v);
+pub fn append_fixed64(b: &mut impl io::Write, v: u64) -> Result<(), Error> {
+    b.write(&v.to_le_bytes())?;
+    Ok(())
 }
 
-fn consume_fixed64(b: &mut Bytes) -> Result<u64, Error> {
-    if b.len() < 8 {
+pub fn consume_fixed64(b: &mut impl io::Read) -> Result<u64, Error> {
+    let mut v = [0; 8];
+    if b.read(&mut v)? != 8 {
         return Err(Error::Eof);
     }
 
-    Ok(b.get_u64_le())
+    Ok(u64::from_le_bytes(v))
 }
 
 pub fn size_fixed64() -> usize {
     8
 }
 
-fn append_bytes(b: &mut BytesMut, v: Bytes) {
-    append_varint(b, v.len() as u64);
-    b.put(v);
+pub fn append_bytes(b: &mut impl io::Write, v: &[u8]) -> Result<(), Error> {
+    append_varint(b, v.len() as u64)?;
+    b.write(v)?;
+    Ok(())
 }
 
-fn consume_bytes(b: &mut Bytes) -> Result<Bytes, Error> {
-    let m = consume_varint(b)?;
-    if m > b.len() as u64 {
+pub fn consume_bytes(b: &mut impl io::Read) -> Result<Vec<u8>, Error> {
+    let len = consume_varint(b)? as usize;
+    let mut v = vec![0; len];
+    if dbg!(b.read(v.as_mut_slice())?) != len {
         Err(Error::Eof)
     } else {
-        Ok(b.split_to(m as usize))
+        Ok(v)
     }
 }
 
@@ -192,14 +202,21 @@ pub fn size_bytes(n: usize) -> usize {
     size_varint(n as u64) + n
 }
 
-fn append_group(b: &mut BytesMut, num: FieldNumber, v: Vec<(FieldNumber, WireValue)>) {
+pub fn append_group(
+    b: &mut impl io::Write,
+    num: FieldNumber,
+    v: Vec<(FieldNumber, WireValue)>,
+) -> Result<(), Error> {
     for (vn, vv) in v {
-        append_field(b, vn, vv);
+        append_field(b, vn, vv)?;
     }
-    append_tag(b, num, WireType::EndGroup);
+    append_tag(b, num, WireType::EndGroup)
 }
 
-fn consume_group(num: FieldNumber, b: &mut Bytes) -> Result<Vec<(FieldNumber, WireValue)>, Error> {
+pub fn consume_group(
+    num: FieldNumber,
+    b: &mut impl io::Read,
+) -> Result<Vec<(FieldNumber, WireValue)>, Error> {
     let mut v = Vec::new();
     loop {
         let (num2, typ2) = consume_tag(b)?;
@@ -253,423 +270,497 @@ mod tests {
     use super::*;
 
     #[test]
-    fn field_end_mismatch() {
-        let mut b = BytesMut::new();
+    fn field_end_mismatch() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(1).unwrap();
-        append_tag(&mut b, num, WireType::EndGroup);
-        assert_eq!(consume_field(&mut b.freeze()), Err(Error::EndGroup));
+        append_tag(&mut b, num, WireType::EndGroup)?;
+        assert!(matches!(
+            consume_field(&mut b.as_slice()),
+            Err(Error::EndGroup)
+        ));
+
+        Ok(())
     }
 
     #[test]
-    fn field() {
-        let mut b = BytesMut::new();
+    fn field() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num1 = FieldNumber::try_from(1).unwrap();
-        append_tag(&mut b, num1, WireType::Varint);
-        append_varint(&mut b, 0x123456789);
+        append_tag(&mut b, num1, WireType::Varint)?;
+        append_varint(&mut b, 0x123456789)?;
 
         let num2 = FieldNumber::try_from(2).unwrap();
-        append_tag(&mut b, num2, WireType::Fixed32);
-        append_fixed32(&mut b, 0x1234);
+        append_tag(&mut b, num2, WireType::Fixed32)?;
+        append_fixed32(&mut b, 0x1234)?;
 
         let num3 = FieldNumber::try_from(3).unwrap();
-        append_tag(&mut b, num3, WireType::Fixed64);
-        append_fixed64(&mut b, 0x123456789);
+        append_tag(&mut b, num3, WireType::Fixed64)?;
+        append_fixed64(&mut b, 0x123456789)?;
 
         let num4 = FieldNumber::try_from(4).unwrap();
-        append_tag(&mut b, num4, WireType::Bytes);
-        append_bytes(&mut b, Bytes::from_static(b"hello"));
+        append_tag(&mut b, num4, WireType::Bytes)?;
+        append_bytes(&mut b, b"hello")?;
 
-        let mut b = b.freeze();
+        let mut b = b.as_slice();
         assert_eq!(
-            consume_field(&mut b),
-            Ok((num1, WireValue::Varint(0x123456789)))
+            consume_field(&mut b)?,
+            (num1, WireValue::Varint(0x123456789))
+        );
+        assert_eq!(consume_field(&mut b)?, (num2, WireValue::Fixed32(0x1234)));
+        assert_eq!(
+            consume_field(&mut b)?,
+            (num3, WireValue::Fixed64(0x123456789))
         );
         assert_eq!(
-            consume_field(&mut b),
-            Ok((num2, WireValue::Fixed32(0x1234)))
+            consume_field(&mut b)?,
+            (num4, WireValue::Bytes(b"hello".to_vec()))
         );
-        assert_eq!(
-            consume_field(&mut b),
-            Ok((num3, WireValue::Fixed64(0x123456789)))
-        );
-        assert_eq!(
-            consume_field(&mut b),
-            Ok((num4, WireValue::Bytes(Bytes::from_static(b"hello"))))
-        );
+
+        Ok(())
     }
 
     #[test]
-    fn field_with_group() {
-        let mut b = BytesMut::new();
+    fn field_with_group() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(1).unwrap();
         let num_group = FieldNumber::try_from(5000).unwrap();
-        append_tag(&mut b, num_group, WireType::StartGroup);
+        append_tag(&mut b, num_group, WireType::StartGroup)?;
         append_group(
             &mut b,
             num_group,
             vec![(num, WireValue::Varint(0x123456789))],
-        );
+        )?;
 
-        let mut b = b.freeze();
+        let mut b = b.as_slice();
         assert_eq!(
-            consume_field(&mut b),
-            Ok((
+            consume_field(&mut b)?,
+            (
                 num_group,
                 WireValue::Group(vec![(num, WireValue::Varint(0x123456789))])
-            ))
+            )
         );
+
+        Ok(())
     }
     #[test]
-    fn group_eof() {
-        let mut b = BytesMut::new();
+    fn group_eof() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(1).unwrap();
-        append_tag(&mut b, num, WireType::StartGroup);
-        assert_eq!(consume_group(num, &mut b.freeze()), Err(Error::Eof));
+        append_tag(&mut b, num, WireType::StartGroup)?;
+        assert!(matches!(
+            consume_group(num, &mut b.as_slice()),
+            Err(Error::Eof)
+        ));
+
+        Ok(())
     }
 
     #[test]
-    fn group_nested_eof() {
+    fn group_nested_eof() -> Result<(), Error> {
         let num1 = FieldNumber::try_from(1).unwrap();
         let num2 = FieldNumber::try_from(2).unwrap();
-        let mut b = BytesMut::new();
-        append_tag(&mut b, num2, WireType::StartGroup);
-        append_tag(&mut b, num2, WireType::EndGroup);
-        assert_eq!(consume_group(num1, &mut b.freeze()), Err(Error::Eof));
+        let mut b = Vec::new();
+        append_tag(&mut b, num2, WireType::StartGroup)?;
+        append_tag(&mut b, num2, WireType::EndGroup)?;
+        assert!(matches!(
+            consume_group(num1, &mut b.as_slice()),
+            Err(Error::Eof)
+        ));
+
+        Ok(())
     }
 
     #[test]
-    fn group_end_mismatch() {
-        let mut b = BytesMut::new();
+    fn group_end_mismatch() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num1 = FieldNumber::try_from(1).unwrap();
         let num2 = FieldNumber::try_from(2).unwrap();
-        append_tag(&mut b, num2, WireType::EndGroup);
-        assert_eq!(consume_group(num1, &mut b.freeze()), Err(Error::EndGroup));
+        append_tag(&mut b, num2, WireType::EndGroup)?;
+        assert!(matches!(
+            consume_group(num1, &mut b.as_slice()),
+            Err(Error::EndGroup)
+        ));
+
+        Ok(())
     }
 
     #[test]
-    fn group_nested_end_mismatch() {
+    fn group_nested_end_mismatch() -> Result<(), Error> {
         let num1 = FieldNumber::try_from(1).unwrap();
         let num2 = FieldNumber::try_from(2).unwrap();
-        let mut b = BytesMut::new();
-        append_tag(&mut b, num2, WireType::StartGroup);
-        append_tag(&mut b, num1, WireType::EndGroup);
-        assert_eq!(consume_group(num1, &mut b.freeze()), Err(Error::EndGroup));
+        let mut b = Vec::new();
+        append_tag(&mut b, num2, WireType::StartGroup)?;
+        append_tag(&mut b, num1, WireType::EndGroup)?;
+        assert!(matches!(
+            consume_group(num1, &mut b.as_slice()),
+            Err(Error::EndGroup)
+        ));
+
+        Ok(())
     }
 
     #[test]
-    fn group() {
-        let mut b = BytesMut::new();
+    fn group() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(5).unwrap();
-        append_tag(&mut b, num, WireType::Fixed32);
-        append_fixed32(&mut b, 0xf0e1d2c3);
-        append_tag(&mut b, num, WireType::EndGroup);
+        append_tag(&mut b, num, WireType::Fixed32)?;
+        append_fixed32(&mut b, 0xf0e1d2c3)?;
+        append_tag(&mut b, num, WireType::EndGroup)?;
         assert_eq!(
-            consume_group(num, &mut b.freeze()),
-            Ok(vec![(num, WireValue::Fixed32(0xf0e1d2c3))])
+            consume_group(num, &mut b.as_slice())?,
+            vec![(num, WireValue::Fixed32(0xf0e1d2c3))]
         );
+
+        Ok(())
     }
 
     #[test]
-    fn group_nested() {
+    fn group_nested() -> Result<(), Error> {
         let num1 = FieldNumber::try_from(1).unwrap();
         let num2 = FieldNumber::try_from(2).unwrap();
-        let mut b = BytesMut::new();
-        append_tag(&mut b, num2, WireType::StartGroup);
-        append_tag(&mut b, num2, WireType::EndGroup);
-        append_tag(&mut b, num1, WireType::EndGroup);
+        let mut b = Vec::new();
+        append_tag(&mut b, num2, WireType::StartGroup)?;
+        append_tag(&mut b, num2, WireType::EndGroup)?;
+        append_tag(&mut b, num1, WireType::EndGroup)?;
         assert_eq!(
-            consume_group(num1, &mut b.freeze()),
-            Ok(vec![(num2, WireValue::Group(Vec::new()))])
+            consume_group(num1, &mut b.as_slice())?,
+            vec![(num2, WireValue::Group(Vec::new()))]
         );
+
+        Ok(())
     }
 
     #[test]
-    fn group_empty() {
-        let mut b = BytesMut::new();
+    fn group_empty() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(1).unwrap();
-        append_tag(&mut b, num, WireType::EndGroup);
-        assert_eq!(consume_group(num, &mut b.freeze()), Ok(Vec::new()));
+        append_tag(&mut b, num, WireType::EndGroup)?;
+        assert_eq!(consume_group(num, &mut b.as_slice())?, Vec::new());
+
+        Ok(())
     }
 
     #[test]
-    fn group_denormalized() {
-        let mut b = BytesMut::new();
+    fn group_denormalized() -> Result<(), Error> {
+        let mut b = Vec::new();
         let num = FieldNumber::try_from(5).unwrap();
-        append_tag(&mut b, num, WireType::Fixed32);
-        append_fixed32(&mut b, 0xf0e1d2c3);
+        append_tag(&mut b, num, WireType::Fixed32)?;
+        append_fixed32(&mut b, 0xf0e1d2c3)?;
         // manually end group
         b.extend_from_slice(b"\xac\x80\x80\x00");
         assert_eq!(
-            consume_group(num, &mut b.freeze()),
-            Ok(vec![(num, WireValue::Fixed32(0xf0e1d2c3))])
+            consume_group(num, &mut b.as_slice())?,
+            vec![(num, WireValue::Fixed32(0xf0e1d2c3))]
         );
+
+        Ok(())
     }
 
     #[test]
     fn varint_eof() {
-        let mut b = Bytes::from_static(b"\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Eof));
+        let mut b = b"\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80\x80\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
+        let mut b = b"\x80\x80\x80\x80\x80\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Eof)));
     }
 
     #[test]
     fn varint_overflow() {
         // Too many MSB's
-        let mut b = Bytes::from_static(b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80");
-        assert_eq!(consume_varint(&mut b), Err(Error::Overflow));
+        let mut b = b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x80".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Overflow)));
         // Exceeds u64::MAX
-        let mut b = Bytes::from_static(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02");
-        assert_eq!(consume_varint(&mut b), Err(Error::Overflow));
+        let mut b = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x02".as_ref();
+        assert!(matches!(consume_varint(&mut b), Err(Error::Overflow)));
     }
 
     #[test]
-    fn varint_boundaries() {
-        let vals: Vec<(u64, &[u8])> = vec![
-            (0x00, b"\x00"),
-            (0x01, b"\x01"),
-            (0x7f, b"\x7f"),
-            (0x80, b"\x80\x01"),
-            (0x3f_ff, b"\xff\x7f"),
-            (0x40_00, b"\x80\x80\x01"),
-            (0x1f_ff_ff, b"\xff\xff\x7f"),
-            (0x20_00_00, b"\x80\x80\x80\x01"),
-            (0x0f_ff_ff_ff, b"\xff\xff\xff\x7f"),
-            (0x10_00_00_00, b"\x80\x80\x80\x80\x01"),
-            (0x07_ff_ff_ff_ff, b"\xff\xff\xff\xff\x7f"),
-            (0x08_00_00_00_00, b"\x80\x80\x80\x80\x80\x01"),
-            (0x03_ff_ff_ff_ff_ff, b"\xff\xff\xff\xff\xff\x7f"),
-            (0x04_00_00_00_00_00, b"\x80\x80\x80\x80\x80\x80\x01"),
-            (0x01_ff_ff_ff_ff_ff_ff, b"\xff\xff\xff\xff\xff\xff\x7f"),
-            (0x02_00_00_00_00_00_00, b"\x80\x80\x80\x80\x80\x80\x80\x01"),
-            (0xff_ff_ff_ff_ff_ff_ff, b"\xff\xff\xff\xff\xff\xff\xff\x7f"),
+    fn varint_boundaries() -> Result<(), Error> {
+        let vals = vec![
+            (0x00, b"\x00".as_ref()),
+            (0x01, b"\x01".as_ref()),
+            (0x7f, b"\x7f".as_ref()),
+            (0x80, b"\x80\x01".as_ref()),
+            (0x3f_ff, b"\xff\x7f".as_ref()),
+            (0x40_00, b"\x80\x80\x01".as_ref()),
+            (0x1f_ff_ff, b"\xff\xff\x7f".as_ref()),
+            (0x20_00_00, b"\x80\x80\x80\x01".as_ref()),
+            (0x0f_ff_ff_ff, b"\xff\xff\xff\x7f".as_ref()),
+            (0x10_00_00_00, b"\x80\x80\x80\x80\x01".as_ref()),
+            (0x07_ff_ff_ff_ff, b"\xff\xff\xff\xff\x7f".as_ref()),
+            (0x08_00_00_00_00, b"\x80\x80\x80\x80\x80\x01".as_ref()),
+            (0x03_ff_ff_ff_ff_ff, b"\xff\xff\xff\xff\xff\x7f".as_ref()),
+            (
+                0x04_00_00_00_00_00,
+                b"\x80\x80\x80\x80\x80\x80\x01".as_ref(),
+            ),
+            (
+                0x01_ff_ff_ff_ff_ff_ff,
+                b"\xff\xff\xff\xff\xff\xff\x7f".as_ref(),
+            ),
+            (
+                0x02_00_00_00_00_00_00,
+                b"\x80\x80\x80\x80\x80\x80\x80\x01".as_ref(),
+            ),
+            (
+                0xff_ff_ff_ff_ff_ff_ff,
+                b"\xff\xff\xff\xff\xff\xff\xff\x7f".as_ref(),
+            ),
             (
                 0x01_00_00_00_00_00_00_00,
-                b"\x80\x80\x80\x80\x80\x80\x80\x80\x01",
+                b"\x80\x80\x80\x80\x80\x80\x80\x80\x01".as_ref(),
             ),
             (
                 0x7f_ff_ff_ff_ff_ff_ff_ff,
-                b"\xff\xff\xff\xff\xff\xff\xff\xff\x7f",
+                b"\xff\xff\xff\xff\xff\xff\xff\xff\x7f".as_ref(),
             ),
             (
                 0x80_00_00_00_00_00_00_00,
-                b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01",
+                b"\x80\x80\x80\x80\x80\x80\x80\x80\x80\x01".as_ref(),
             ),
         ];
 
         for (v, raw) in vals {
-            let mut b = BytesMut::new();
-            append_varint(&mut b, v);
-            assert_eq!(b, Bytes::from(raw));
-            assert_eq!(consume_varint(&mut b.freeze()), Ok(v));
+            let mut b = Vec::new();
+            append_varint(&mut b, v)?;
+            assert_eq!(b, raw);
+            assert_eq!(consume_varint(&mut b.as_slice())?, v);
         }
+
+        Ok(())
     }
 
     #[test]
-    fn varint_max() {
-        let mut b = BytesMut::new();
-        append_varint(&mut b, u64::MAX);
-        assert_eq!(
-            b,
-            Bytes::from_static(b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01")
-        );
-        assert_eq!(consume_varint(&mut b.freeze()), Ok(u64::MAX));
+    fn varint_max() -> Result<(), Error> {
+        let mut b = Vec::new();
+        append_varint(&mut b, u64::MAX)?;
+        assert_eq!(b, b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\x01".as_ref());
+        assert_eq!(consume_varint(&mut b.as_slice())?, u64::MAX);
+
+        Ok(())
     }
+
     #[test]
-    fn varint_denormalized() {
-        let mut b = Bytes::from_static(b"\x01");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x80\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x80\x80\x80\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x80\x80\x80\x80\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
-        let mut b = Bytes::from_static(b"\x81\x80\x80\x80\x80\x80\x80\x80\x00");
-        assert_eq!(consume_varint(&mut b), Ok(1));
+    fn varint_denormalized() -> Result<(), Error> {
+        let mut b = b"\x01".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x80\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x80\x80\x80\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x80\x80\x80\x80\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+        let mut b = b"\x81\x80\x80\x80\x80\x80\x80\x80\x00".as_ref();
+        assert_eq!(consume_varint(&mut b)?, 1);
+
+        Ok(())
     }
 
     #[test]
     fn bytes_eof() {
-        let mut b = Bytes::from_static(b"");
-        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
+        let mut b = b"".as_ref();
+        assert!(matches!(consume_bytes(&mut b), Err(Error::Eof)));
 
-        let mut b = Bytes::from_static(b"\x01");
-        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
+        let mut b = b"\x01".as_ref();
+        assert!(matches!(consume_bytes(&mut b), Err(Error::Eof)));
 
-        let mut b = Bytes::from_static(b"\x05hell");
-        assert_eq!(consume_bytes(&mut b), Err(Error::Eof));
+        let mut b = b"\x05hell".as_ref();
+        assert!(matches!(consume_bytes(&mut b), Err(Error::Eof)));
     }
 
     #[test]
-    fn bytes_empty() {
-        let mut b = BytesMut::new();
-        append_bytes(&mut b, Bytes::new());
-        assert_eq!(b, Bytes::from_static(b"\x00"));
-        assert_eq!(consume_bytes(&mut b.freeze()), Ok(Bytes::from_static(b"")));
+    fn bytes_empty() -> Result<(), Error> {
+        let mut b = Vec::new();
+        append_bytes(&mut b, b"")?;
+        assert_eq!(b, b"\x00".as_ref());
+        assert_eq!(consume_bytes(&mut b.as_slice())?, b"".to_vec());
+
+        Ok(())
     }
 
     #[test]
-    fn bytes_small() {
-        let mut b = BytesMut::new();
-        append_bytes(&mut b, Bytes::from_static(b"hello"));
-        assert_eq!(b, Bytes::from_static(b"\x05hello"));
-        assert_eq!(
-            consume_bytes(&mut b.freeze()),
-            Ok(Bytes::from_static(b"hello"))
-        );
+    fn bytes_small() -> Result<(), Error> {
+        let mut b = Vec::new();
+        append_bytes(&mut b, b"hello".as_ref())?;
+        assert_eq!(b, b"\x05hello".as_ref());
+        assert_eq!(consume_bytes(&mut b.as_slice())?, b"hello".to_vec());
+
+        Ok(())
     }
 
     #[test]
-    fn bytes_large() {
-        let v = Bytes::from(b"hello".repeat(50));
-        let mut b = BytesMut::new();
-        append_bytes(&mut b, v.clone());
-        assert_eq!(
-            b,
-            Bytes::from([Bytes::from_static(b"\xfa\x01"), v.clone()].concat())
-        );
-        assert_eq!(consume_bytes(&mut b.freeze()), Ok(v));
+    fn bytes_large() -> Result<(), Error> {
+        let v = Vec::from(b"hello".repeat(50));
+        let mut b = Vec::new();
+        append_bytes(&mut b, v.as_slice())?;
+        assert_eq!(b, Vec::from([b"\xfa\x01".as_ref(), v.as_slice()].concat()));
+        assert_eq!(consume_bytes(&mut b.as_slice())?, v);
+
+        Ok(())
     }
 
     #[test]
     fn fixed32_eof() {
-        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::Eof));
+        assert!(matches!(
+            consume_fixed32(&mut b"".as_ref()),
+            Err(Error::Eof)
+        ));
     }
 
     #[test]
-    fn fixed32_min() {
-        let mut b = BytesMut::new();
+    fn fixed32_min() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0;
-        append_fixed32(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\x00\x00\x00\x00"));
-        assert_eq!(consume_fixed32(&mut b.freeze()), Ok(v));
+        append_fixed32(&mut b, v)?;
+        assert_eq!(b, b"\x00\x00\x00\x00".as_ref());
+        assert_eq!(consume_fixed32(&mut b.as_slice())?, v);
+
+        Ok(())
     }
 
     #[test]
-    fn fixed32_max() {
-        let mut b = BytesMut::new();
+    fn fixed32_max() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0xff_ff_ff_ff;
-        append_fixed32(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\xff\xff\xff\xff"));
-        assert_eq!(consume_fixed32(&mut b.freeze()), Ok(v));
+        append_fixed32(&mut b, v)?;
+        assert_eq!(b, b"\xff\xff\xff\xff".as_ref());
+        assert_eq!(consume_fixed32(&mut b.as_slice())?, v);
+
+        Ok(())
     }
 
     #[test]
-    fn fixed32() {
-        let mut b = BytesMut::new();
+    fn fixed32() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0xf0_e1_d2_c3;
-        append_fixed32(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\xc3\xd2\xe1\xf0"));
-        assert_eq!(consume_fixed32(&mut b.freeze()), Ok(v));
+        append_fixed32(&mut b, v)?;
+        assert_eq!(b, b"\xc3\xd2\xe1\xf0".as_ref());
+        assert_eq!(consume_fixed32(&mut b.as_slice())?, v);
+
+        Ok(())
     }
 
     #[test]
     fn fixed64_eof() {
-        assert_eq!(consume_fixed32(&mut Bytes::from("")), Err(Error::Eof));
+        assert!(matches!(
+            consume_fixed32(&mut b"".as_ref()),
+            Err(Error::Eof)
+        ));
     }
 
     #[test]
-    fn fixed64_min() {
-        let mut b = BytesMut::new();
+    fn fixed64_min() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0;
-        append_fixed64(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\x00\x00\x00\x00\x00\x00\x00\x00"));
-        assert_eq!(consume_fixed64(&mut b.freeze()), Ok(v));
+        append_fixed64(&mut b, v)?;
+        assert_eq!(b, b"\x00\x00\x00\x00\x00\x00\x00\x00".as_ref());
+        assert_eq!(consume_fixed64(&mut b.as_slice())?, v);
+
+        Ok(())
     }
+
     #[test]
-    fn fixed64_max() {
-        let mut b = BytesMut::new();
+    fn fixed64_max() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0xff_ff_ff_ff_ff_ff_ff_ff;
-        append_fixed64(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\xff\xff\xff\xff\xff\xff\xff\xff"));
-        assert_eq!(consume_fixed64(&mut b.freeze()), Ok(v));
+        append_fixed64(&mut b, v)?;
+        assert_eq!(b, b"\xff\xff\xff\xff\xff\xff\xff\xff".as_ref());
+        assert_eq!(consume_fixed64(&mut b.as_slice())?, v);
+
+        Ok(())
     }
+
     #[test]
-    fn fixed64() {
-        let mut b = BytesMut::new();
+    fn fixed64() -> Result<(), Error> {
+        let mut b = Vec::new();
         let v = 0xf0_e1_d2_c3_b4_a5_96_87;
-        append_fixed64(&mut b, v);
-        assert_eq!(b, Bytes::from_static(b"\x87\x96\xa5\xb4\xc3\xd2\xe1\xf0"));
-        assert_eq!(consume_fixed64(&mut b.freeze()), Ok(v));
+        append_fixed64(&mut b, v)?;
+        assert_eq!(b, b"\x87\x96\xa5\xb4\xc3\xd2\xe1\xf0".as_ref());
+        assert_eq!(consume_fixed64(&mut b.as_slice())?, v);
+
+        Ok(())
     }
 
     #[test]
     fn tag_eof() {
-        assert_eq!(consume_tag(&mut Bytes::from("")), Err(Error::Eof));
+        assert!(matches!(consume_tag(&mut b"".as_ref()), Err(Error::Eof)));
     }
 
     #[test]
     fn tag_invalid_field_type() {
         // number = 1, type = 6
-        assert_eq!(
-            consume_tag(&mut Bytes::from_static(b"\x0e")),
+        assert!(matches!(
+            consume_tag(&mut b"\x0e".as_ref()),
             Err(Error::InvalidWireType(6))
-        );
+        ));
     }
 
     #[test]
     fn tag_invalid_field_number() {
         // number = 0, type = 0
-        assert_eq!(
-            consume_tag(&mut Bytes::from_static(b"\x00")),
+        assert!(matches!(
+            consume_tag(&mut b"\x00".as_ref()),
             Err(Error::InvalidFieldNumber(0))
-        );
+        ));
     }
 
     #[test]
-    fn tag_min() {
-        let mut b = BytesMut::new();
-        append_tag(&mut b, FieldNumber::try_from(1).unwrap(), WireType::Fixed32);
-        assert_eq!(b, Bytes::from_static(b"\x0d"));
+    fn tag_min() -> Result<(), Error> {
+        let mut b = Vec::new();
+        append_tag(&mut b, FieldNumber::try_from(1).unwrap(), WireType::Fixed32)?;
+        assert_eq!(b, b"\x0d".as_ref());
         assert_eq!(
-            consume_tag(&mut b.freeze()),
-            Ok((FieldNumber::try_from(1).unwrap(), WireType::Fixed32))
+            consume_tag(&mut b.as_slice())?,
+            (FieldNumber::try_from(1).unwrap(), WireType::Fixed32)
         );
+
+        Ok(())
     }
 
     #[test]
-    fn tag_max() {
-        let mut b = BytesMut::new();
+    fn tag_max() -> Result<(), Error> {
+        let mut b = Vec::new();
         let max = FieldNumber::try_from((1 << 29) - 1).unwrap();
-        append_tag(&mut b, max, WireType::Fixed32);
-        assert_eq!(b, Bytes::from_static(b"\xfd\xff\xff\xff\x0f"));
-        assert_eq!(consume_tag(&mut b.freeze()), Ok((max, WireType::Fixed32)));
+        append_tag(&mut b, max, WireType::Fixed32)?;
+        assert_eq!(b, b"\xfd\xff\xff\xff\x0f".as_ref());
+        assert_eq!(consume_tag(&mut b.as_slice())?, (max, WireType::Fixed32));
+
+        Ok(())
     }
 
-    // #[test]
-    // fn zig_zag() {
-    //     let vals: Vec<(i64, u64)> = vec![
-    //         (i64::MIN, u64::MAX),
-    //         (i64::MIN + 1, u64::MAX - 2),
-    //         (-1, 1),
-    //         (0, 0),
-    //         (1, 2),
-    //         (i64::MAX - 1, u64::MAX - 3),
-    //         (i64::MAX, u64::MAX - 1),
-    //     ];
+    #[test]
+    fn zig_zag() {
+        let vals: Vec<(i64, u64)> = vec![
+            (i64::MIN, u64::MAX),
+            (i64::MIN + 1, u64::MAX - 2),
+            (-1, 1),
+            (0, 0),
+            (1, 2),
+            (i64::MAX - 1, u64::MAX - 3),
+            (i64::MAX, u64::MAX - 1),
+        ];
 
-    //     for (dec, enc) in vals {
-    //         assert_eq!(encode_zig_zag(dec), enc);
-    //         assert_eq!(decode_zig_zag(enc), dec);
-    //     }
-    // }
+        for (dec, enc) in vals {
+            assert_eq!(encode_zig_zag(dec), enc);
+            assert_eq!(decode_zig_zag(enc), dec);
+        }
+    }
 }

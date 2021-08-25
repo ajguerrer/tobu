@@ -1,5 +1,8 @@
 use serde::Serialize;
-use serde_protobuf::info::{Cardinality, FieldInfo, MessageInfo, Syntax, Type};
+use tobu::{
+    encoding::field::FieldNumber,
+    info::{Cardinality, FieldInfo, MessageInfo, Syntax, Type},
+};
 
 #[derive(Serialize)]
 struct Inner {
@@ -20,7 +23,7 @@ const OUTER_INFO: MessageInfo = MessageInfo {
             name: "s1",
             json_name: "s1",
             type_name: "s1",
-            number: 1,
+            number: unsafe { FieldNumber::new_unchecked(1) },
             cardinality: Cardinality::Optional,
             ty: Type::Int32,
             message_info: None,
@@ -32,7 +35,7 @@ const OUTER_INFO: MessageInfo = MessageInfo {
             name: "s2",
             json_name: "s2",
             type_name: "s2",
-            number: 2,
+            number: unsafe { FieldNumber::new_unchecked(2) },
             cardinality: Cardinality::Optional,
             ty: Type::Message,
             message_info: Some(&INNER_INFO),
@@ -51,7 +54,7 @@ const INNER_INFO: MessageInfo = MessageInfo {
         name: "i2",
         json_name: "i2",
         type_name: "i2",
-        number: 1,
+        number: unsafe { FieldNumber::new_unchecked(1) },
         cardinality: Cardinality::Optional,
         ty: Type::String,
         message_info: None,
@@ -70,6 +73,6 @@ fn main() {
             i1: "hello".to_string(),
         },
     };
-    let size = serde_protobuf::serialized_size(&s, &OUTER_INFO).unwrap();
-    assert_eq!(size, 0);
+    let size = tobu::serialized_size(&s, &OUTER_INFO).unwrap();
+    assert_eq!(size, 10);
 }

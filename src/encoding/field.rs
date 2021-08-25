@@ -38,6 +38,12 @@ impl FieldNumber {
     }
 }
 
+impl Default for FieldNumber {
+    fn default() -> Self {
+        FieldNumber(1)
+    }
+}
+
 impl TryFrom<i32> for FieldNumber {
     type Error = Error;
     fn try_from(v: i32) -> Result<Self, Self::Error> {

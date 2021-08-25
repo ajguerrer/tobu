@@ -16,7 +16,7 @@ To get a better grasp of Rust, I felt the need to work on a project and took per
 [`protobuf`] and [`gRPC`]. In particular, I wanted to try making a server that supports the
 [`transcoding`] `google.api.http` annotation.
 
-```protobuf
+```proto
 // transcode between HTTP GET /v1/shelves/{shelf} and GetShelf gRPC 
 // where the field shelf in GetShelfRequest maps to {shelf} in the URI. 
 // Note: All protobuf messages have a JSON encoding.
@@ -80,7 +80,7 @@ Though the interface is nice, the devil is in the details, as they say. Hidden u
 interface was an implementation that even a fledgling Rustacean such as myself could tell would not
 translate to Rust without a world of hurt. Take for example:
 
-```protobuf
+```proto
 syntax = "proto3";
 
 message Simple {
@@ -440,7 +440,7 @@ title, I found two type conversion candidates to compare: heavy and light.
 Before getting into it, let's flex the Protobuf type system a little more by making a new message 
 `Complex`.
 
-```protobuf
+```proto
 syntax = "proto2";
 
 message Complex {
@@ -460,7 +460,7 @@ message Complex {
 }
 ``` 
 
-Let's also fully flesh out `Value`, but this time without the references.
+Lets also fully flesh out `Value`, but this time without the references.
 
 ```rust
 use std::collections::HashMap;
