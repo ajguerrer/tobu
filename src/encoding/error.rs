@@ -1,5 +1,3 @@
-use std::io;
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error("field {0} contains invalid UTF-8")]
@@ -28,7 +26,4 @@ pub enum Error {
 
     #[error("mismatching end group marker")]
     EndGroup,
-
-    #[error("{0}")]
-    IO(#[from] io::Error),
 }

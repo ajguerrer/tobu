@@ -1,13 +1,12 @@
-use std::io;
-
+use bytes::BufMut;
 use serde::ser::{self, Impossible, SerializeMap, SerializeSeq, SerializeStruct};
 
 use crate::{
     encoding::{
         field::FieldNumber,
         wire::{
-            append_bytes, append_fixed32, append_fixed64, append_tag, append_varint, encode_tag,
-            encode_zig_zag, size_bytes, size_fixed32, size_fixed64, size_tag, size_varint,
+            encode_tag, encode_zig_zag, put_bytes, put_fixed32, put_fixed64, put_tag, put_varint,
+            size_bytes, size_fixed32, size_fixed64, size_tag, size_varint,
         },
     },
     error::Error,
@@ -364,20 +363,20 @@ impl<'a> SerializeStruct for MessageSizeHint<'a> {
     }
 }
 
-pub(crate) struct Serializer<W> {
-    writer: W,
+pub(crate) struct Serializer<'b, B> {
+    buffer: &'b mut B,
     message_info: &'static MessageInfo,
     field_index: usize,
     is_nested: bool,
 }
 
-impl<W> Serializer<W>
+impl<'b, B> Serializer<'b, B>
 where
-    W: io::Write,
+    B: BufMut,
 {
-    pub fn new(writer: W, message_info: &'static MessageInfo) -> Self {
+    pub fn new(buffer: &'b mut B, message_info: &'static MessageInfo) -> Self {
         Serializer {
-            writer,
+            buffer,
             message_info,
             field_index: 0,
             is_nested: false,
@@ -398,18 +397,18 @@ where
     }
 }
 
-impl<'a, W> serde::Serializer for &'a mut Serializer<W>
+impl<'a, 'b, B> serde::Serializer for &'a mut Serializer<'b, B>
 where
-    W: io::Write,
+    B: BufMut,
 {
     type Ok = ();
     type Error = Error;
-    type SerializeSeq = RepeatedSerializer<'a, W>;
+    type SerializeSeq = RepeatedSerializer<'a, 'b, B>;
     type SerializeTuple = Impossible<Self::Ok, Self::Error>;
     type SerializeTupleStruct = Impossible<Self::Ok, Self::Error>;
     type SerializeTupleVariant = Impossible<Self::Ok, Self::Error>;
-    type SerializeMap = MapSerializer<'a, W>;
-    type SerializeStruct = MessageSerializer<'a, W>;
+    type SerializeMap = MapSerializer<'a, 'b, B>;
+    type SerializeStruct = MessageSerializer<'a, 'b, B>;
     type SerializeStructVariant = Impossible<Self::Ok, Self::Error>;
 
     fn serialize_bool(self, v: bool) -> Result<Self::Ok, Self::Error> {
@@ -453,17 +452,20 @@ where
 
         match field_info.ty {
             Type::Int32 | Type::Uint32 | Type::Int64 | Type::Uint64 | Type::Bool | Type::Enum => {
-                append_varint(&mut self.writer, v).map_err(ser::Error::custom)
+                put_varint(&mut self.buffer, v);
+                Ok(())
             }
             Type::Fixed32 | Type::SFixed32 | Type::Float => {
-                append_fixed32(&mut self.writer, v as u32).map_err(ser::Error::custom)
+                put_fixed32(&mut self.buffer, v as u32);
+                Ok(())
             }
             Type::Fixed64 | Type::SFixed64 | Type::Double => {
-                append_fixed64(&mut self.writer, v).map_err(ser::Error::custom)
+                put_fixed64(&mut self.buffer, v);
+                Ok(())
             }
             Type::SInt32 | Type::SInt64 => {
-                append_varint(&mut self.writer, encode_zig_zag(v as i64))
-                    .map_err(ser::Error::custom)
+                put_varint(&mut self.buffer, encode_zig_zag(v as i64));
+                Ok(())
             }
             _ => Err(ser::Error::custom("field descriptor does not match value")),
         }
@@ -492,7 +494,8 @@ where
         {
             Ok(())
         } else {
-            append_bytes(&mut self.writer, v).map_err(ser::Error::custom)
+            put_bytes(&mut self.buffer, v);
+            Ok(())
         }
     }
 
@@ -552,9 +555,9 @@ where
         let field_info = self.field_info()?;
         let tag = encode_tag(field_info.number, field_info.ty.wire_type());
         if field_info.packed {
-            append_varint(&mut self.writer, tag).map_err(ser::Error::custom)?;
+            put_varint(&mut self.buffer, tag);
             let len = len.ok_or_else(|| ser::Error::custom("unknown seq len"))?;
-            append_varint(&mut self.writer, len as u64).map_err(ser::Error::custom)?;
+            put_varint(&mut self.buffer, len as u64);
             Ok(RepeatedSerializer {
                 ser: self,
                 tag: None,
@@ -599,10 +602,10 @@ where
 
         let key_field = map_fields
             .find(|f| f.number == key_number)
-            .ok_or(ser::Error::custom("key field for map not found"))?;
+            .ok_or_else(|| ser::Error::custom("key field for map not found"))?;
         let value_field = map_fields
             .find(|f| f.number == value_number)
-            .ok_or(ser::Error::custom("value field for map not found"))?;
+            .ok_or_else(|| ser::Error::custom("value field for map not found"))?;
 
         Ok(MapSerializer {
             ser: self,
@@ -641,14 +644,14 @@ where
     }
 }
 
-pub(crate) struct RepeatedSerializer<'a, W> {
-    ser: &'a mut Serializer<W>,
+pub(crate) struct RepeatedSerializer<'a, 'b, B> {
+    ser: &'a mut Serializer<'b, B>,
     tag: Option<u64>,
 }
 
-impl<'a, W> SerializeSeq for RepeatedSerializer<'a, W>
+impl<'a, 'b, B> SerializeSeq for RepeatedSerializer<'a, 'b, B>
 where
-    W: io::Write,
+    B: BufMut,
 {
     type Ok = ();
 
@@ -659,7 +662,7 @@ where
         T: serde::Serialize,
     {
         if let Some(tag) = self.tag {
-            append_varint(&mut self.ser.writer, tag).map_err(ser::Error::custom)?;
+            put_varint(&mut self.ser.buffer, tag);
         }
         value.serialize(&mut *self.ser)
     }
@@ -669,15 +672,15 @@ where
     }
 }
 
-pub(crate) struct MapSerializer<'a, W> {
-    ser: &'a mut Serializer<W>,
+pub(crate) struct MapSerializer<'a, 'b, B> {
+    ser: &'a mut Serializer<'b, B>,
     key_tag: u64,
     value_tag: u64,
 }
 
-impl<'a, W> SerializeMap for MapSerializer<'a, W>
+impl<'a, 'b, B> SerializeMap for MapSerializer<'a, 'b, B>
 where
-    W: io::Write,
+    B: BufMut,
 {
     type Ok = ();
     type Error = Error;
@@ -686,7 +689,7 @@ where
     where
         T: serde::Serialize,
     {
-        append_varint(&mut self.ser.writer, self.key_tag).map_err(ser::Error::custom)?;
+        put_varint(&mut self.ser.buffer, self.key_tag);
         key.serialize(&mut *self.ser)
     }
 
@@ -694,7 +697,7 @@ where
     where
         T: serde::Serialize,
     {
-        append_varint(&mut self.ser.writer, self.value_tag).map_err(ser::Error::custom)?;
+        put_varint(&mut self.ser.buffer, self.value_tag);
         value.serialize(&mut *self.ser)
     }
 
@@ -703,14 +706,14 @@ where
     }
 }
 
-pub(crate) struct MessageSerializer<'a, W> {
-    ser: &'a mut Serializer<W>,
+pub(crate) struct MessageSerializer<'a, 'b, B> {
+    ser: &'a mut Serializer<'b, B>,
     parent: Option<(&'static MessageInfo, usize)>,
 }
 
-impl<'a, W> SerializeStruct for MessageSerializer<'a, W>
+impl<'a, 'b, B> SerializeStruct for MessageSerializer<'a, 'b, B>
 where
-    W: io::Write,
+    B: BufMut,
 {
     type Ok = ();
     type Error = Error;
@@ -724,12 +727,11 @@ where
         T: serde::Serialize,
     {
         let field_info = self.ser.field_info()?;
-        append_tag(
-            &mut self.ser.writer,
+        put_tag(
+            &mut self.ser.buffer,
             field_info.number,
             field_info.ty.wire_type(),
-        )
-        .map_err(ser::Error::custom)?;
+        );
         value.serialize(&mut *self.ser)
     }
 
