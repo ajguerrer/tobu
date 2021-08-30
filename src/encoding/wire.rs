@@ -50,6 +50,10 @@ pub enum WireValue {
 }
 
 pub fn parse(buf: &mut Bytes) -> Result<Vec<(FieldNumber, WireValue)>, Error> {
+    // TODO: Come up with a size hint for this vec, but do not decode tags twice.
+    // Probably will need to re-write parser to use iterators.
+    // May also want to be lazy and return raw field values
+    // Vec<(FieldNumber, WireType, Bytes)>
     let mut fields = Vec::new();
     while !buf.is_empty() {
         fields.push(parse_field(buf)?);
@@ -114,6 +118,7 @@ pub fn size_tag(num: FieldNumber) -> usize {
 // Varint is a variable length encoding for a u64.
 // To encode, a u64 is split every 7 bits and formed into a [u8] where the most
 // significant bit of each u8 is '1' unless its the most significant non-zero u8.
+// TODO: Unfortunately, hand unrolling this is much faster.
 pub fn put_varint(buf: &mut impl BufMut, val: u64) {
     let mut val = val;
     while val >= 0x80 {
@@ -123,6 +128,7 @@ pub fn put_varint(buf: &mut impl BufMut, val: u64) {
     buf.put_u8(val as u8);
 }
 
+// TODO: Unfortunately, hand unrolling this is much faster.
 pub fn parse_varint(buf: &mut Bytes) -> Result<u64, Error> {
     let mut varint: u64 = 0;
 
