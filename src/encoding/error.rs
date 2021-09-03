@@ -23,7 +23,4 @@ pub enum Error {
 
     #[error("variable length integer overflow")]
     Overflow,
-
-    #[error("mismatching end group marker")]
-    EndGroup,
 }

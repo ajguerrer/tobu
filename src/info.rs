@@ -70,7 +70,7 @@ pub enum Type {
 }
 
 impl Type {
-    pub fn wire_type(&self) -> WireType {
+    pub(crate) fn wire_type(&self) -> WireType {
         match self {
             Type::Double => WireType::Fixed64,
             Type::Float => WireType::Fixed32,
