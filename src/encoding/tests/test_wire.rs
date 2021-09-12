@@ -148,6 +148,16 @@ fn group_denormalized() {
 }
 
 #[test]
+fn group_size() {
+    let mut buf = BytesMut::new();
+
+    let num = FieldNumber::try_from(5000).unwrap();
+    put_tag(&mut buf, num, WireType::EndGroup);
+
+    assert_eq!(size_group(num, 3), buf.len() + 3);
+}
+
+#[test]
 fn varint_eof() {
     let values = vec![
         Bytes::from_static(b"\x80"),
@@ -295,6 +305,15 @@ fn varint_denormalized() {
 }
 
 #[test]
+fn varint_size() {
+    let mut buf = BytesMut::new();
+    put_varint(&mut buf, u64::MIN);
+    put_varint(&mut buf, u64::MAX);
+
+    assert_eq!(size_varint(u64::MIN) + size_varint(u64::MAX), buf.len());
+}
+
+#[test]
 fn bytes_eof() {
     let values = vec![
         Bytes::from_static(b""),
@@ -365,6 +384,16 @@ fn bytes_large() {
 }
 
 #[test]
+fn bytes_size() {
+    let mut buf = BytesMut::new();
+
+    let val = b"\x01\x02\x03";
+    put_bytes(&mut buf, val);
+
+    assert_eq!(size_bytes(val.len()), buf.len());
+}
+
+#[test]
 fn fixed32_eof() {
     let mut buf = BytesMut::new();
 
@@ -428,6 +457,15 @@ fn fixed32() {
 }
 
 #[test]
+fn fixed32_size() {
+    let mut buf = BytesMut::new();
+
+    put_fixed32(&mut buf, u32::MAX);
+
+    assert_eq!(size_fixed32(), buf.len());
+}
+
+#[test]
 fn fixed64_eof() {
     let mut buf = BytesMut::new();
 
@@ -488,6 +526,15 @@ fn fixed64() {
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
         WireField(num, FieldValue::Fixed64(val))
     );
+}
+
+#[test]
+fn fixed64_size() {
+    let mut buf = BytesMut::new();
+
+    put_fixed64(&mut buf, u64::MAX);
+
+    assert_eq!(size_fixed64(), buf.len());
 }
 
 #[test]
@@ -555,6 +602,19 @@ fn tag_max() {
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
         WireField(max, FieldValue::Fixed32(val))
     );
+}
+
+#[test]
+fn tag_size() {
+    let mut buf = BytesMut::new();
+
+    let min = FieldNumber::try_from(1).unwrap();
+    put_tag(&mut buf, min, WireType::Fixed32);
+
+    let max = FieldNumber::try_from((1 << 29) - 1).unwrap();
+    put_tag(&mut buf, max, WireType::Fixed32);
+
+    assert_eq!(size_tag(min) + size_tag(max), buf.len());
 }
 
 #[test]

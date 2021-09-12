@@ -107,17 +107,14 @@ pub(crate) fn size_tag(num: FieldNumber) -> usize {
 // Varint is a variable length encoding for a u64.
 // To encode, a u64 is split every 7 bits and formed into a [u8] where the most
 // significant bit of each u8 is '1' unless its the most significant non-zero u8.
-// TODO: Unfortunately, hand unrolling this is much faster.
-pub(crate) fn put_varint(buf: &mut impl BufMut, val: u64) {
-    let mut val = val;
+pub(crate) fn put_varint(buf: &mut impl BufMut, mut val: u64) {
     while val >= 0x80 {
-        buf.put_u8(((val & !0x80) | 0x80) as u8);
+        buf.put_u8(val as u8 | 0x80);
         val >>= 7;
     }
     buf.put_u8(val as u8);
 }
 
-// TODO: Unfortunately, hand unrolling this is much faster.
 fn parse_varint(buf: &mut Bytes) -> Result<u64, Error> {
     let mut varint: u64 = 0;
 
@@ -130,7 +127,7 @@ fn parse_varint(buf: &mut Bytes) -> Result<u64, Error> {
 
         // u64::MAX check
         if index == 9 && val > 1 {
-            return Err(Error::Overflow);
+            break;
         }
 
         varint += (val as u64 & !0x80) << (7 * index);
@@ -199,7 +196,7 @@ pub(crate) fn size_bytes(num: usize) -> usize {
 }
 
 pub(crate) fn size_group(num: FieldNumber, len: usize) -> usize {
-    len + size_tag(num)
+    size_tag(num) + len
 }
 
 fn decode_tag(varint: u64) -> Result<(FieldNumber, WireType), Error> {
@@ -219,16 +216,4 @@ pub(crate) fn decode_zig_zag(varint: u64) -> i64 {
 
 pub(crate) fn encode_zig_zag(varint: i64) -> u64 {
     (varint << 1) as u64 ^ (varint >> 63) as u64
-}
-
-pub(crate) fn decode_bool(varint: u64) -> bool {
-    varint != 0
-}
-
-pub(crate) fn encode_bool(varint: bool) -> u64 {
-    if varint {
-        1
-    } else {
-        0
-    }
 }
