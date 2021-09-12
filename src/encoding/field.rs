@@ -57,6 +57,6 @@ impl TryFrom<i32> for FieldNumber {
 
 impl From<FieldNumber> for i32 {
     fn from(v: FieldNumber) -> Self {
-        v.0 as i32
+        v.0
     }
 }
