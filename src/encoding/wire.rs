@@ -2,7 +2,7 @@ use std::{convert::TryFrom, result::Result};
 
 use bytes::{Buf, BufMut, Bytes};
 
-use super::{error::Error, field::FieldNumber};
+use super::{error::DecodeError, field::FieldNumber};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum WireType {
@@ -33,15 +33,18 @@ impl WireType {
 }
 
 impl TryFrom<i8> for WireType {
-    type Error = Error;
+    type Error = DecodeError;
 
     fn try_from(num: i8) -> Result<Self, Self::Error> {
-        WireType::new(num).ok_or(Error::InvalidWireType(num))
+        WireType::new(num).ok_or(DecodeError::InvalidWireType(num))
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct WireField(pub(crate) FieldNumber, pub(crate) FieldValue);
+pub(crate) struct WireField {
+    pub(crate) num: FieldNumber,
+    pub(crate) val: FieldValue,
+}
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum FieldValue {
@@ -64,7 +67,7 @@ impl Parser {
 }
 
 impl Iterator for Parser {
-    type Item = Result<WireField, Error>;
+    type Item = Result<WireField, DecodeError>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.buf.is_empty() {
@@ -75,13 +78,13 @@ impl Iterator for Parser {
     }
 }
 
-fn parse_next(buf: &mut Bytes) -> Result<WireField, Error> {
+fn parse_next(buf: &mut Bytes) -> Result<WireField, DecodeError> {
     let (num, typ) = parse_tag(buf)?;
     let val = parse_wire_value(buf, typ)?;
-    Ok(WireField(num, val))
+    Ok(WireField { num, val })
 }
 
-fn parse_wire_value(buf: &mut Bytes, typ: WireType) -> Result<FieldValue, Error> {
+fn parse_wire_value(buf: &mut Bytes, typ: WireType) -> Result<FieldValue, DecodeError> {
     match typ {
         WireType::Varint => Ok(FieldValue::Varint(parse_varint(buf)?)),
         WireType::Fixed32 => Ok(FieldValue::Fixed32(parse_fixed32(buf)?)),
@@ -96,7 +99,7 @@ pub(crate) fn put_tag(buf: &mut impl BufMut, num: FieldNumber, typ: WireType) {
     put_varint(buf, encode_tag(num, typ));
 }
 
-fn parse_tag(buf: &mut Bytes) -> Result<(FieldNumber, WireType), Error> {
+fn parse_tag(buf: &mut Bytes) -> Result<(FieldNumber, WireType), DecodeError> {
     decode_tag(parse_varint(buf)?)
 }
 
@@ -115,12 +118,12 @@ pub(crate) fn put_varint(buf: &mut impl BufMut, mut val: u64) {
     buf.put_u8(val as u8);
 }
 
-fn parse_varint(buf: &mut Bytes) -> Result<u64, Error> {
+fn parse_varint(buf: &mut Bytes) -> Result<u64, DecodeError> {
     let mut varint: u64 = 0;
 
     for index in 0..=9 {
         if buf.is_empty() {
-            return Err(Error::Eof);
+            return Err(DecodeError::Eof);
         }
 
         let val = buf.get_u8();
@@ -136,7 +139,7 @@ fn parse_varint(buf: &mut Bytes) -> Result<u64, Error> {
         }
     }
 
-    Err(Error::Overflow)
+    Err(DecodeError::Overflow)
 }
 
 pub(crate) fn size_varint(num: u64) -> usize {
@@ -149,9 +152,9 @@ pub(crate) fn put_fixed32(buf: &mut impl BufMut, val: u32) {
     buf.put_u32_le(val);
 }
 
-fn parse_fixed32(buf: &mut Bytes) -> Result<u32, Error> {
+fn parse_fixed32(buf: &mut Bytes) -> Result<u32, DecodeError> {
     if buf.len() < 4 {
-        return Err(Error::Eof);
+        return Err(DecodeError::Eof);
     }
 
     Ok(buf.get_u32_le())
@@ -165,9 +168,9 @@ pub(crate) fn put_fixed64(buf: &mut impl BufMut, val: u64) {
     buf.put_u64_le(val);
 }
 
-fn parse_fixed64(buf: &mut Bytes) -> Result<u64, Error> {
+fn parse_fixed64(buf: &mut Bytes) -> Result<u64, DecodeError> {
     if buf.len() < 8 {
-        return Err(Error::Eof);
+        return Err(DecodeError::Eof);
     }
 
     Ok(buf.get_u64_le())
@@ -182,10 +185,10 @@ pub(crate) fn put_bytes(buf: &mut impl BufMut, val: &[u8]) {
     buf.put_slice(val);
 }
 
-fn parse_bytes(buf: &mut Bytes) -> Result<Bytes, Error> {
+fn parse_bytes(buf: &mut Bytes) -> Result<Bytes, DecodeError> {
     let len = parse_varint(buf)? as usize;
     if len > buf.len() {
-        Err(Error::Eof)
+        Err(DecodeError::Eof)
     } else {
         Ok(buf.split_to(len as usize))
     }
@@ -199,7 +202,7 @@ pub(crate) fn size_group(num: FieldNumber, len: usize) -> usize {
     size_tag(num) + len
 }
 
-fn decode_tag(varint: u64) -> Result<(FieldNumber, WireType), Error> {
+fn decode_tag(varint: u64) -> Result<(FieldNumber, WireType), DecodeError> {
     Ok((
         FieldNumber::try_from((varint >> 3) as i32)?,
         WireType::try_from((varint & 7) as i8)?,

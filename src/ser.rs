@@ -187,7 +187,7 @@ impl<'a> serde::Serializer for &'a mut SizeHint {
         let size_tag = size_varint(field_info.number.get() as u64);
         if field_info.packed {
             // tag + len + element_1..element_len
-            let len = len.ok_or_else(|| ser::Error::custom("unknown seq len"))?;
+            let len = len.ok_or(Error::UnknownSeqLen)?;
             let size_len = size_varint(len as u64);
             Ok(RepeatedSizeHint {
                 total: size_tag + size_len,
@@ -556,7 +556,7 @@ where
         let tag = encode_tag(field_info.number, field_info.ty.wire_type());
         if field_info.packed {
             put_varint(&mut self.buffer, tag);
-            let len = len.ok_or_else(|| ser::Error::custom("unknown seq len"))?;
+            let len = len.ok_or(Error::UnknownSeqLen)?;
             put_varint(&mut self.buffer, len as u64);
             Ok(RepeatedSerializer {
                 ser: self,
@@ -596,16 +596,15 @@ where
     fn serialize_map(self, _len: Option<usize>) -> Result<Self::SerializeMap, Self::Error> {
         let mut map_fields = self.message_info()?.fields.iter();
 
-        // safety: 1 and 2 are valid field numbers
-        let key_number = unsafe { FieldNumber::new_unchecked(1) };
-        let value_number = unsafe { FieldNumber::new_unchecked(2) };
+        let key_number = FieldNumber::new(1);
+        let value_number = FieldNumber::new(2);
 
         let key_field = map_fields
             .find(|f| f.number == key_number)
-            .ok_or_else(|| ser::Error::custom("key field for map not found"))?;
+            .ok_or(Error::FieldNotFound(key_number))?;
         let value_field = map_fields
             .find(|f| f.number == value_number)
-            .ok_or_else(|| ser::Error::custom("value field for map not found"))?;
+            .ok_or(Error::FieldNotFound(value_number))?;
 
         Ok(MapSerializer {
             ser: self,

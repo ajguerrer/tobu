@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::encoding::{error::Error, field::FieldNumber, wire::*};
+use crate::encoding::{error::DecodeError, field::FieldNumber, wire::*};
 
 #[test]
 fn field() {
@@ -31,19 +31,31 @@ fn field() {
     let mut parser = Parser::new(buf.freeze());
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num1, FieldValue::Varint(val1))
+        WireField {
+            num: num1,
+            val: FieldValue::Varint(val1)
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num2, FieldValue::Fixed32(val2))
+        WireField {
+            num: num2,
+            val: FieldValue::Fixed32(val2)
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num3, FieldValue::Fixed64(val3))
+        WireField {
+            num: num3,
+            val: FieldValue::Fixed64(val3)
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num4, FieldValue::Bytes(val4))
+        WireField {
+            num: num4,
+            val: FieldValue::Bytes(val4)
+        }
     );
 }
 
@@ -64,15 +76,24 @@ fn group() {
     let mut parser = Parser::new(buf.freeze());
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(group_num, FieldValue::StartGroup)
+        WireField {
+            num: group_num,
+            val: FieldValue::StartGroup
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::Varint(val))
+        WireField {
+            num,
+            val: FieldValue::Varint(val)
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(group_num, FieldValue::EndGroup)
+        WireField {
+            num: group_num,
+            val: FieldValue::EndGroup
+        }
     );
 }
 
@@ -91,15 +112,24 @@ fn group_nested() {
     let mut parser = Parser::new(buf.freeze());
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::StartGroup)
+        WireField {
+            num,
+            val: FieldValue::StartGroup
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(nested_num, FieldValue::StartGroup)
+        WireField {
+            num: nested_num,
+            val: FieldValue::StartGroup
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(nested_num, FieldValue::EndGroup)
+        WireField {
+            num: nested_num,
+            val: FieldValue::EndGroup
+        }
     );
 }
 
@@ -115,11 +145,17 @@ fn group_empty() {
     let mut parser = Parser::new(buf.freeze());
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::StartGroup)
+        WireField {
+            num,
+            val: FieldValue::StartGroup
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::EndGroup)
+        WireField {
+            num,
+            val: FieldValue::EndGroup
+        }
     );
 }
 
@@ -139,11 +175,17 @@ fn group_denormalized() {
     let mut parser = Parser::new(buf.freeze());
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed32(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed32(val)
+        }
     );
     assert_eq!(
         parser.next().unwrap().unwrap(),
-        WireField(num, FieldValue::EndGroup)
+        WireField {
+            num,
+            val: FieldValue::EndGroup
+        }
     );
 }
 
@@ -180,7 +222,7 @@ fn varint_eof() {
 
         assert!(matches!(
             Parser::new(buf.freeze()).next().unwrap(),
-            Err(Error::Eof)
+            Err(DecodeError::Eof)
         ));
     }
 }
@@ -199,7 +241,7 @@ fn varint_overflow_significant_bits() {
 
     assert!(matches!(
         Parser::new(buf.freeze()).next().unwrap(),
-        Err(Error::Overflow)
+        Err(DecodeError::Overflow)
     ));
 }
 
@@ -217,7 +259,7 @@ fn varint_overflow_u64_max_plus_one() {
 
     assert!(matches!(
         Parser::new(buf.freeze()).next().unwrap(),
-        Err(Error::Overflow)
+        Err(DecodeError::Overflow)
     ));
 }
 
@@ -256,7 +298,10 @@ fn varint_boundaries() {
 
         assert_eq!(
             Parser::new(buf.freeze()).next().unwrap().unwrap(),
-            WireField(num, FieldValue::Varint(val))
+            WireField {
+                num,
+                val: FieldValue::Varint(val)
+            }
         );
     }
 }
@@ -272,7 +317,10 @@ fn varint_max() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Varint(u64::MAX))
+        WireField {
+            num,
+            val: FieldValue::Varint(u64::MAX)
+        }
     );
 }
 
@@ -299,7 +347,10 @@ fn varint_denormalized() {
 
         assert_eq!(
             Parser::new(buf.freeze()).next().unwrap().unwrap(),
-            WireField(num, FieldValue::Varint(1))
+            WireField {
+                num,
+                val: FieldValue::Varint(1)
+            }
         );
     }
 }
@@ -331,7 +382,7 @@ fn bytes_eof() {
 
         assert!(matches!(
             Parser::new(buf.freeze()).next().unwrap(),
-            Err(Error::Eof)
+            Err(DecodeError::Eof)
         ));
     }
 }
@@ -347,7 +398,10 @@ fn bytes_empty() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Bytes(Bytes::from_static(b"")))
+        WireField {
+            num,
+            val: FieldValue::Bytes(Bytes::from_static(b""))
+        }
     );
 }
 
@@ -363,7 +417,10 @@ fn bytes_small() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Bytes(val))
+        WireField {
+            num,
+            val: FieldValue::Bytes(val)
+        }
     );
 }
 
@@ -379,7 +436,10 @@ fn bytes_large() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Bytes(val))
+        WireField {
+            num,
+            val: FieldValue::Bytes(val)
+        }
     );
 }
 
@@ -404,7 +464,7 @@ fn fixed32_eof() {
 
     assert!(matches!(
         Parser::new(buf.freeze()).next().unwrap(),
-        Err(Error::Eof)
+        Err(DecodeError::Eof)
     ));
 }
 
@@ -420,7 +480,10 @@ fn fixed32_min() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed32(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed32(val)
+        }
     );
 }
 
@@ -436,7 +499,10 @@ fn fixed32_max() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed32(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed32(val)
+        }
     );
 }
 
@@ -452,7 +518,10 @@ fn fixed32() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed32(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed32(val)
+        }
     );
 }
 
@@ -476,7 +545,7 @@ fn fixed64_eof() {
 
     assert!(matches!(
         Parser::new(buf.freeze()).next().unwrap(),
-        Err(Error::Eof)
+        Err(DecodeError::Eof)
     ));
 }
 
@@ -492,7 +561,10 @@ fn fixed64_min() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed64(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed64(val)
+        }
     );
 }
 
@@ -508,7 +580,10 @@ fn fixed64_max() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed64(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed64(val)
+        }
     );
 }
 
@@ -524,7 +599,10 @@ fn fixed64() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(num, FieldValue::Fixed64(val))
+        WireField {
+            num,
+            val: FieldValue::Fixed64(val)
+        }
     );
 }
 
@@ -541,7 +619,7 @@ fn fixed64_size() {
 fn tag_eof() {
     assert!(matches!(
         Parser::new(Bytes::from_static(b"\x80")).next().unwrap(),
-        Err(Error::Eof)
+        Err(DecodeError::Eof)
     ));
 }
 
@@ -550,7 +628,7 @@ fn tag_invalid_field_type() {
     // num = 1, typ = 6
     assert!(matches!(
         Parser::new(Bytes::from_static(b"\x0e")).next().unwrap(),
-        Err(Error::InvalidWireType(6))
+        Err(DecodeError::InvalidWireType(6))
     ));
 }
 
@@ -562,12 +640,12 @@ fn tag_invalid_field_number() {
     for val in values {
         let mut buf = BytesMut::new();
 
-        let invalid_num = unsafe { FieldNumber::new_unchecked(val) };
+        let invalid_num = FieldNumber::new(val);
         put_tag(&mut buf, invalid_num, WireType::Varint);
 
         assert!(matches!(
             Parser::new(buf.freeze()).next().unwrap(),
-            Err(Error::InvalidFieldNumber(_))
+            Err(DecodeError::InvalidFieldNumber(_))
         ));
     }
 }
@@ -584,7 +662,10 @@ fn tag_min() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(min, FieldValue::Fixed32(val))
+        WireField {
+            num: min,
+            val: FieldValue::Fixed32(val)
+        }
     );
 }
 
@@ -600,7 +681,10 @@ fn tag_max() {
 
     assert_eq!(
         Parser::new(buf.freeze()).next().unwrap().unwrap(),
-        WireField(max, FieldValue::Fixed32(val))
+        WireField {
+            num: max,
+            val: FieldValue::Fixed32(val)
+        }
     );
 }
 
