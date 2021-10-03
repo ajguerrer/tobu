@@ -1,6 +1,6 @@
 use std::convert::TryFrom;
 
-use crate::encoding::field::FieldNumber;
+use crate::field::FieldNumber;
 
 #[test]
 fn field_number() {

@@ -1,0 +1,9 @@
+[package]
+name = "tobu-format"
+version = "0.1.0"
+authors = ["Andrew Guerrero <ajguerrer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+thiserror = "1"
+bytes = "1"

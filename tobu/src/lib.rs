@@ -5,7 +5,6 @@ use ser::{Serializer, SizeHint};
 use serde::Serialize;
 
 pub mod de;
-pub mod encoding;
 pub mod error;
 pub mod info;
 pub mod ser;

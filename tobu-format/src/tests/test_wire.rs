@@ -2,7 +2,7 @@ use std::convert::TryFrom;
 
 use bytes::{BufMut, Bytes, BytesMut};
 
-use crate::encoding::{error::DecodeError, field::FieldNumber, wire::*};
+use crate::{error::DecodeError, field::FieldNumber, wire::*};
 
 #[test]
 fn field() {
@@ -640,8 +640,8 @@ fn tag_invalid_field_number() {
     for val in values {
         let mut buf = BytesMut::new();
 
-        let invalid_num = FieldNumber::new(val);
-        put_tag(&mut buf, invalid_num, WireType::Varint);
+        // Artificially create a tag by encoding the field number manually
+        put_varint(&mut buf, val << 3);
 
         assert!(matches!(
             Parser::new(buf.freeze()).next().unwrap(),

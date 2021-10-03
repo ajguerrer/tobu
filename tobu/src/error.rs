@@ -1,8 +1,7 @@
 use std::fmt::Display;
 
 use serde::{de, ser};
-
-use crate::encoding::{error::DecodeError, field::FieldNumber};
+use tobu_format::{error::DecodeError, field::FieldNumber};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

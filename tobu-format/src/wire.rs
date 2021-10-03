@@ -5,7 +5,7 @@ use bytes::{Buf, BufMut, Bytes};
 use super::{error::DecodeError, field::FieldNumber};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum WireType {
+pub enum WireType {
     Varint = 0,
     Fixed32 = 5,
     Fixed64 = 1,
@@ -15,7 +15,7 @@ pub(crate) enum WireType {
 }
 
 impl WireType {
-    pub(crate) fn new(num: i8) -> Option<Self> {
+    pub fn new(num: i8) -> Option<Self> {
         match num {
             0 => Some(WireType::Varint),
             5 => Some(WireType::Fixed32),
@@ -27,7 +27,7 @@ impl WireType {
         }
     }
 
-    pub(crate) const fn get(self) -> i8 {
+    pub const fn get(self) -> i8 {
         self as i8
     }
 }
@@ -41,13 +41,13 @@ impl TryFrom<i8> for WireType {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct WireField {
-    pub(crate) num: FieldNumber,
-    pub(crate) val: FieldValue,
+pub struct WireField {
+    pub num: FieldNumber,
+    pub val: FieldValue,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum FieldValue {
+pub enum FieldValue {
     Varint(u64),
     Fixed32(u32),
     Fixed64(u64),
@@ -56,12 +56,12 @@ pub(crate) enum FieldValue {
     EndGroup,
 }
 
-pub(crate) struct Parser {
+pub struct Parser {
     buf: Bytes,
 }
 
 impl Parser {
-    pub(crate) fn new(buf: Bytes) -> Self {
+    pub fn new(buf: Bytes) -> Self {
         Parser { buf }
     }
 }
@@ -95,7 +95,7 @@ fn parse_wire_value(buf: &mut Bytes, typ: WireType) -> Result<FieldValue, Decode
     }
 }
 
-pub(crate) fn put_tag(buf: &mut impl BufMut, num: FieldNumber, typ: WireType) {
+pub fn put_tag(buf: &mut impl BufMut, num: FieldNumber, typ: WireType) {
     put_varint(buf, encode_tag(num, typ));
 }
 
@@ -103,14 +103,14 @@ fn parse_tag(buf: &mut Bytes) -> Result<(FieldNumber, WireType), DecodeError> {
     decode_tag(parse_varint(buf)?)
 }
 
-pub(crate) fn size_tag(num: FieldNumber) -> usize {
+pub fn size_tag(num: FieldNumber) -> usize {
     size_varint(encode_tag(num, WireType::Varint))
 }
 
 // Varint is a variable length encoding for a u64.
 // To encode, a u64 is split every 7 bits and formed into a [u8] where the most
 // significant bit of each u8 is '1' unless its the most significant non-zero u8.
-pub(crate) fn put_varint(buf: &mut impl BufMut, mut val: u64) {
+pub fn put_varint(buf: &mut impl BufMut, mut val: u64) {
     while val >= 0x80 {
         buf.put_u8(val as u8 | 0x80);
         val >>= 7;
@@ -142,13 +142,13 @@ fn parse_varint(buf: &mut Bytes) -> Result<u64, DecodeError> {
     Err(DecodeError::Overflow)
 }
 
-pub(crate) fn size_varint(num: u64) -> usize {
+pub fn size_varint(num: u64) -> usize {
     // 1 + (bits_needed_to_represent(val) - 1)/ 7
     // 9/64 is a good enough approximation of 1/7 and easy to divide
     1 + (64u32 - num.leading_zeros()) as usize * 9 / 64
 }
 
-pub(crate) fn put_fixed32(buf: &mut impl BufMut, val: u32) {
+pub fn put_fixed32(buf: &mut impl BufMut, val: u32) {
     buf.put_u32_le(val);
 }
 
@@ -160,11 +160,11 @@ fn parse_fixed32(buf: &mut Bytes) -> Result<u32, DecodeError> {
     Ok(buf.get_u32_le())
 }
 
-pub(crate) fn size_fixed32() -> usize {
+pub fn size_fixed32() -> usize {
     4
 }
 
-pub(crate) fn put_fixed64(buf: &mut impl BufMut, val: u64) {
+pub fn put_fixed64(buf: &mut impl BufMut, val: u64) {
     buf.put_u64_le(val);
 }
 
@@ -176,11 +176,11 @@ fn parse_fixed64(buf: &mut Bytes) -> Result<u64, DecodeError> {
     Ok(buf.get_u64_le())
 }
 
-pub(crate) fn size_fixed64() -> usize {
+pub fn size_fixed64() -> usize {
     8
 }
 
-pub(crate) fn put_bytes(buf: &mut impl BufMut, val: &[u8]) {
+pub fn put_bytes(buf: &mut impl BufMut, val: &[u8]) {
     put_varint(buf, val.len() as u64);
     buf.put_slice(val);
 }
@@ -194,11 +194,11 @@ fn parse_bytes(buf: &mut Bytes) -> Result<Bytes, DecodeError> {
     }
 }
 
-pub(crate) fn size_bytes(num: usize) -> usize {
+pub fn size_bytes(num: usize) -> usize {
     size_varint(num as u64) + num
 }
 
-pub(crate) fn size_group(num: FieldNumber, len: usize) -> usize {
+pub fn size_group(num: FieldNumber, len: usize) -> usize {
     size_tag(num) + len
 }
 
@@ -209,14 +209,14 @@ fn decode_tag(varint: u64) -> Result<(FieldNumber, WireType), DecodeError> {
     ))
 }
 
-pub(crate) fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
+pub fn encode_tag(num: FieldNumber, typ: WireType) -> u64 {
     ((num.get() as u64) << 3) | (typ as u64 & 7)
 }
 
-pub(crate) fn decode_zig_zag(varint: u64) -> i64 {
+pub fn decode_zig_zag(varint: u64) -> i64 {
     (varint >> 1) as i64 ^ (varint as i64) << 63 >> 63
 }
 
-pub(crate) fn encode_zig_zag(varint: i64) -> u64 {
+pub fn encode_zig_zag(varint: i64) -> u64 {
     (varint << 1) as u64 ^ (varint >> 63) as u64
 }

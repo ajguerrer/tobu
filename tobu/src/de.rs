@@ -1,13 +1,11 @@
 use bytes::Bytes;
 use serde::de;
-
-use crate::{
-    encoding::{
-        error::DecodeError,
-        wire::{Parser, WireField},
-    },
-    error::Error,
+use tobu_format::{
+    error::DecodeError,
+    wire::{Parser, WireField},
 };
+
+use crate::error::Error;
 
 pub struct Deserializer {
     parser: Parser,
@@ -58,11 +56,11 @@ impl<'de, 'r> de::Deserializer<'de> for &'r mut Deserializer {
         todo!()
     }
 
-    fn deserialize_i32<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_i32<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        visitor.visit_i32(3)
+        todo!()
     }
 
     fn deserialize_i64<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -121,7 +119,7 @@ impl<'de, 'r> de::Deserializer<'de> for &'r mut Deserializer {
         todo!()
     }
 
-    fn deserialize_str<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_str<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
@@ -149,11 +147,11 @@ impl<'de, 'r> de::Deserializer<'de> for &'r mut Deserializer {
         todo!()
     }
 
-    fn deserialize_option<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_option<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {
-        visitor.visit_some(self)
+        todo!()
     }
 
     fn deserialize_unit<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
@@ -243,7 +241,7 @@ impl<'de, 'r> de::Deserializer<'de> for &'r mut Deserializer {
         todo!()
     }
 
-    fn deserialize_identifier<V>(self, visitor: V) -> Result<V::Value, Self::Error>
+    fn deserialize_identifier<V>(self, _visitor: V) -> Result<V::Value, Self::Error>
     where
         V: de::Visitor<'de>,
     {

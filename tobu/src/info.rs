@@ -1,4 +1,4 @@
-use crate::encoding::{field::FieldNumber, wire::WireType};
+use tobu_format::{field::FieldNumber, wire::WireType};
 
 #[derive(Debug, Default, Clone, Copy)]
 pub struct MessageInfo {

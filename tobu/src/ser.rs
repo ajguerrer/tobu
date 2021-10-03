@@ -1,14 +1,14 @@
 use bytes::BufMut;
 use serde::ser::{self, Impossible, SerializeMap, SerializeSeq, SerializeStruct};
+use tobu_format::{
+    field::FieldNumber,
+    wire::{
+        encode_tag, encode_zig_zag, put_bytes, put_fixed32, put_fixed64, put_tag, put_varint,
+        size_bytes, size_fixed32, size_fixed64, size_tag, size_varint,
+    },
+};
 
 use crate::{
-    encoding::{
-        field::FieldNumber,
-        wire::{
-            encode_tag, encode_zig_zag, put_bytes, put_fixed32, put_fixed64, put_tag, put_varint,
-            size_bytes, size_fixed32, size_fixed64, size_tag, size_varint,
-        },
-    },
     error::Error,
     info::{FieldInfo, MessageInfo, Syntax, Type},
 };
