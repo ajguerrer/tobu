@@ -5,3 +5,11 @@ authors = ["Andrew Guerrero <ajguerrer@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+anyhow = "1"
+clap = "2"
+bytes = "1"
+quote = "1"
+proc-macro2 = "1"
+heck = "0.3"
+
+tobu-format = { path = "../tobu-format", version = "0.1.0" }

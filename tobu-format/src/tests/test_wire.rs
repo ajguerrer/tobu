@@ -635,7 +635,6 @@ fn tag_invalid_field_type() {
 #[test]
 fn tag_invalid_field_number() {
     let values = vec![0, 19000, 19999, (1 << 29)];
-    // num = 0, typ = 0
 
     for val in values {
         let mut buf = BytesMut::new();

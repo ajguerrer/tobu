@@ -118,7 +118,7 @@ pub fn put_varint(buf: &mut impl BufMut, mut val: u64) {
     buf.put_u8(val as u8);
 }
 
-fn parse_varint(buf: &mut Bytes) -> Result<u64, DecodeError> {
+pub fn parse_varint(buf: &mut Bytes) -> Result<u64, DecodeError> {
     let mut varint: u64 = 0;
 
     for index in 0..=9 {
