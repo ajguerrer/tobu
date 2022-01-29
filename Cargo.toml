@@ -1,2 +1,29 @@
+[package]
+name = "tobu"
+description = "A protobuf data format for serde with first class support for reflection"
+version = "0.1.0"
+edition = "2021"
+authors = [
+  "Andrew Guerrero <ajguerrer@gmail.com>"
+]
+documentation = "https://docs.rs/tobu"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/ajguerrer/tobu"
+keywords = ["protobuf", "serialization"]
+categories = ["encoding"]
+
 [workspace]
-members = ["tobu", "tobu-format", "tobu-gen"]
+members = ["tobu-format", "tobu-gen"]
+
+[dependencies]
+bytes = "1"
+serde = "1"
+thiserror = "1"
+
+tobu-format = { path = "tobu-format", version = "0.1.0" }
+
+[dev-dependencies]
+serde_derive = "1"
+
+[[example]]
+name = "playground"

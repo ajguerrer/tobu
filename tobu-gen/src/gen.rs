@@ -8,7 +8,7 @@ pub fn gen_file(file: &File) -> TokenStream {
         let mods = mods.iter().map(|m| format_ident!("{}", m));
         quote! { use crate::#(#mods)::*::*; }
     });
-    let messages = file.messages.iter().map(|m| gen_message(m));
+    let messages = file.messages.iter().map(gen_message);
 
     quote! {
         #![allow(dead_code)]
@@ -21,9 +21,9 @@ pub fn gen_file(file: &File) -> TokenStream {
 
 fn gen_message(message: &Message) -> TokenStream {
     let name = format_ident!("{}", message.name);
-    let fields = message.fields.iter().map(|field| gen_field(field));
-    let nested = message.nested.iter().map(|message| gen_message(message));
-    let enums = message.enums.iter().map(|num| gen_enum(num));
+    let fields = message.fields.iter().map(gen_field);
+    let nested = message.nested.iter().map(gen_message);
+    let enums = message.enums.iter().map(gen_enum);
 
     quote! {
         #[derive(Debug, Clone, Default, PartialEq)]

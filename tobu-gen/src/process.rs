@@ -71,7 +71,7 @@ pub enum Cardinality {
 }
 
 pub fn process_files(files: &[FileDescriptorProto]) -> Result<Vec<File>> {
-    files.iter().map(|f| process_file(f)).collect()
+    files.iter().map(process_file).collect()
 }
 
 fn process_file(file: &FileDescriptorProto) -> Result<File> {
